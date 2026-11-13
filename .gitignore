@@ -1,0 +1,3 @@
+# Données volumineuses générées par le pipeline : ne pas versionner,
+# sauf les README qui documentent chaque dossier.
+data/**
