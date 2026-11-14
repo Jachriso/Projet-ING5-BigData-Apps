@@ -31,3 +31,33 @@ title.akas (60,385,482 rows)
   attributes            99.47 %
   isOriginalTitle        0.00 %
 
+title.crew (12,958,477 rows)
+  tconst                 0.00 %
+  directors             44.68 %
+  writers               49.62 %
+
+title.episode (10,030,795 rows)
+  tconst                 0.00 %
+  parentTconst           0.00 %
+  seasonNumber          21.17 %
+  episodeNumber         21.17 %
+
+title.principals (102,738,762 rows)
+  tconst                 0.00 %
+  ordering               0.00 %
+  nconst                 0.00 %
+  category               0.00 %
+  job                   80.66 %
+  characters            51.28 %
+
+title.ratings (1,731,756 rows)
+  tconst                 0.00 %
+  averageRating          0.00 %
+  numVotes               0.00 %
+
+Q2. Five columns with the highest percentage of null values
+  title.akas.attributes            99.47 %
+  title.basics.endYear               98.73 %
+  name.basics.deathYear             98.32 %
+  name.basics.birthYear             95.66 %
+  title.principals.job                   80.66 %
