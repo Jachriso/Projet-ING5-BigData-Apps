@@ -1,0 +1,33 @@
+IMDb - Data preparation
+
+Q1. Percentage of null / missing / empty values per column
+
+name.basics (15,812,577 rows)
+  nconst                 0.00 %
+  primaryName            0.00 %
+  birthYear             95.66 %
+  deathYear             98.32 %
+  primaryProfession     20.36 %
+  knownForTitles        12.12 %
+
+title.basics (12,958,477 rows)
+  tconst                 0.00 %
+  titleType              0.00 %
+  primaryTitle           0.00 %
+  originalTitle          0.00 %
+  isAdult                0.00 %
+  startYear             11.48 %
+  endYear               98.73 %
+  runtimeMinutes        62.18 %
+  genres                 4.23 %
+
+title.akas (60,385,482 rows)
+  titleId                0.00 %
+  ordering               0.00 %
+  title                  0.00 %
+  region                21.53 %
+  language              32.55 %
+  types                 66.86 %
+  attributes            99.47 %
+  isOriginalTitle        0.00 %
+

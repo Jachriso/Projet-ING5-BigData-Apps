@@ -1,3 +1,3 @@
-<!-- notebooks/ : exploration et visualisation uniquement.
-Les notebooks lisent data/clean/ ou data/gold/ (déjà produits par les scripts de src/)
-et ne doivent pas produire de données. -->
+<!-- notebooks/: exploration and visualization only.
+Notebooks read data/clean/ or data/gold/ (produced by the scripts in src/)
+and must not produce data. -->

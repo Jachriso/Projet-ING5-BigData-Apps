@@ -1,3 +1,3 @@
 # 02_enrich.py
-# Étape 2 — Enrichissement : complète les données IMDb avec des informations
-# provenant de Wikidata / Wikipedia, puis écrit le résultat dans data/enriched/.
+# Step 2 - Enrichment: complements the IMDb data with information from
+# Wikidata / Wikipedia, then writes the result to data/enriched/.
