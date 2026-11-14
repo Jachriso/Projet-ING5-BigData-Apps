@@ -1,3 +1,3 @@
 # 03_transform.py
-# Étape 3 — Transformation : jointures entre tables, agrégats et indicateurs.
-# Produit les tables finales prêtes pour l'analyse dans data/gold/.
+# Step 3 - Transformation: joins between tables, aggregates and indicators.
+# Produces the final analysis-ready tables in data/gold/.

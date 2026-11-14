@@ -1,3 +1,3 @@
 # 04_streaming.py
-# Étape 4 — Streaming : consomme le flux temps réel Wikimedia (EventStreams)
-# et le traite / le relie aux données du projet.
+# Step 4 - Streaming: consumes the real-time Wikimedia feed (EventStreams)
+# and processes it / links it to the project data.
