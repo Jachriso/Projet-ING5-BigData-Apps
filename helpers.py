@@ -1,4 +1,5 @@
 from logging import config
+import pyspark.sql.functions as F
 
 def write(report, text=""):
     """Print a line to the terminal and write it to the report."""
