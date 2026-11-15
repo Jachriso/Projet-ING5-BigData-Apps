@@ -28,6 +28,8 @@ MIN_VOTES = 100  # ignore movies rated by too few people
 MIN_EPISODES, MIN_SEASONS = 10, 3
 EARLY_SEASONS = 2
 
+SUCCESS_RATING, SUCCESS_VOTES = 7.0, 10_000
+
 
 def write(report, text=""):
     """Print a line to the terminal and write it to the report."""
@@ -217,6 +219,69 @@ def q5_series_decline(spark, report):
     write(report)
 
 
+REGION_LANGUAGE = {
+    "US": "en", "GB": "en", "AU": "en", "CA": "en", "IE": "en", "NZ": "en",
+    "FR": "fr", "BE": "fr", "DE": "de", "AT": "de", "IT": "it", "ES": "es",
+    "MX": "es", "AR": "es", "PT": "pt", "BR": "pt", "JP": "ja", "KR": "ko",
+    "CN": "zh", "TW": "zh", "HK": "yue", "IN": "hi", "TR": "tr", "RU": "ru",
+    "SE": "sv", "DK": "da", "NO": "no", "FI": "fi", "PL": "pl", "IR": "fa",
+}
+
+
+def original_language(spark):
+    """Estimate each title's original language from the akas matching the
+    original title: their language if given, otherwise the main language of
+    their region. IMDb datasets do not provide the original language."""
+    akas = read_clean(spark, "title.akas")
+    basics = read_clean(spark, "title.basics").select("tconst", "originalTitle")
+    region_lang = F.create_map(*[F.lit(x) for kv in REGION_LANGUAGE.items() for x in kv])
+    counts = (
+        akas.join(basics, (akas["titleId"] == basics["tconst"])
+                  & (F.lower(akas["title"]) == F.lower(basics["originalTitle"])))
+        .withColumn("lang", F.coalesce(F.col("language"), region_lang[F.col("region")]))
+        .filter(F.col("lang").isNotNull())
+        .groupBy("tconst", "lang").agg(F.count("*").alias("n"))
+    )
+    by_title = Window.partitionBy("tconst").orderBy(F.desc("n"), "lang")
+    return (counts.withColumn("rank", F.row_number().over(by_title))
+            .filter(F.col("rank") == 1)
+            .select("tconst", F.col("lang").alias("language")))
+
+
+def q6_actors_multilingual_success(spark, movies, report):
+    """Return actors with successful movies (rating >= SUCCESS_RATING and
+    votes >= SUCCESS_VOTES) in at least 2 and 3 original languages."""
+    hits = movies.filter((F.col("averageRating") >= SUCCESS_RATING)
+                         & (F.col("numVotes") >= SUCCESS_VOTES))
+    hits_lang = hits.join(original_language(spark), "tconst")
+    actors = (read_clean(spark, "title.principals")
+              .filter(F.col("category").isin("actor", "actress"))
+              .select("tconst", "nconst").distinct())
+    names = read_clean(spark, "name.basics").select("nconst", "primaryName")
+    per_actor = (
+        actors.join(hits_lang, "tconst")
+        .groupBy("nconst")
+        .agg(F.countDistinct("language").alias("language_count"),
+             F.countDistinct("tconst").alias("hit_count"),
+             F.concat_ws(", ", F.array_sort(F.collect_set("language"))).alias("languages"))
+        .filter(F.col("language_count") >= 2)
+        .cache()
+    )
+    n_hits, n_with_lang = hits.count(), hits_lang.count()
+    write(report, f"\nQ6. Actors with successful movies (>= {SUCCESS_RATING}, "
+                  f">= {SUCCESS_VOTES:,} votes) in several original languages")
+    write(report, f"  Successful movies: {n_hits:,}  |  with a known language: "
+                  f"{n_with_lang:,} ({100 * n_with_lang / n_hits:.1f}%)")
+    write(report, f"  Actors with >= 2 languages: {per_actor.count():,}")
+    write(report, f"  Actors with >= 3 languages: "
+                  f"{per_actor.filter(F.col('language_count') >= 3).count():,}")
+    top = (per_actor.join(names, "nconst", "left")
+           .select("primaryName", "language_count", "hit_count", "languages")
+           .orderBy(F.desc("language_count"), F.desc("hit_count")))
+    write(report, top.limit(20).toPandas().to_string(index=False))
+    write(report)
+
+
 def main():
     spark = (
         SparkSession.builder.appName("03_explore")
@@ -241,6 +306,7 @@ def main():
         q3_top_vs_rest(movie_genres, top_genres, report)
         q4_one_hit_directors(spark, movies, report)
         q5_series_decline(spark, report)
+        q6_actors_multilingual_success(spark, movies, report)
 
     spark.stop()
 
