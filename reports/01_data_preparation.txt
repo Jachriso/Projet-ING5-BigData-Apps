@@ -1,63 +1,166 @@
 IMDb - Data preparation
 
-Q1. Percentage of null / missing / empty values per column
+Q1. Number and percentage of null / missing / empty values per column
 
 name.basics (15,812,577 rows)
-  nconst                 0.00 %
-  primaryName            0.00 %
-  birthYear             95.66 %
-  deathYear             98.32 %
-  primaryProfession     20.36 %
-  knownForTitles        12.12 %
+  nconst                          0    0.00 %
+  primaryName                    89    0.00 %
+  birthYear              15,126,718   95.66 %
+  deathYear              15,547,099   98.32 %
+  primaryProfession       3,219,851   20.36 %
+  knownForTitles          1,917,161   12.12 %
 
 title.basics (12,958,477 rows)
-  tconst                 0.00 %
-  titleType              0.00 %
-  primaryTitle           0.00 %
-  originalTitle          0.00 %
-  isAdult                0.00 %
-  startYear             11.48 %
-  endYear               98.73 %
-  runtimeMinutes        62.18 %
-  genres                 4.23 %
+  tconst                          0    0.00 %
+  titleType                       0    0.00 %
+  primaryTitle                    0    0.00 %
+  originalTitle                   0    0.00 %
+  isAdult                         0    0.00 %
+  startYear               1,487,875   11.48 %
+  endYear                12,794,047   98.73 %
+  runtimeMinutes          8,056,989   62.18 %
+  genres                    547,930    4.23 %
 
 title.akas (60,385,482 rows)
-  titleId                0.00 %
-  ordering               0.00 %
-  title                  0.00 %
-  region                21.53 %
-  language              32.55 %
-  types                 66.86 %
-  attributes            99.47 %
-  isOriginalTitle        0.00 %
+  titleId                         0    0.00 %
+  ordering                        0    0.00 %
+  title                           0    0.00 %
+  region                 12,998,541   21.53 %
+  language               19,655,399   32.55 %
+  types                  40,375,080   66.86 %
+  attributes             60,068,229   99.47 %
+  isOriginalTitle                 0    0.00 %
 
 title.crew (12,958,477 rows)
-  tconst                 0.00 %
-  directors             44.68 %
-  writers               49.62 %
+  tconst                          0    0.00 %
+  directors               5,789,625   44.68 %
+  writers                 6,430,569   49.62 %
 
 title.episode (10,030,795 rows)
-  tconst                 0.00 %
-  parentTconst           0.00 %
-  seasonNumber          21.17 %
-  episodeNumber         21.17 %
+  tconst                          0    0.00 %
+  parentTconst                    0    0.00 %
+  seasonNumber            2,123,916   21.17 %
+  episodeNumber           2,123,916   21.17 %
 
 title.principals (102,738,762 rows)
-  tconst                 0.00 %
-  ordering               0.00 %
-  nconst                 0.00 %
-  category               0.00 %
-  job                   80.66 %
-  characters            51.28 %
+  tconst                          0    0.00 %
+  ordering                        0    0.00 %
+  nconst                          0    0.00 %
+  category                        0    0.00 %
+  job                    82,869,755   80.66 %
+  characters             52,680,715   51.28 %
 
 title.ratings (1,731,756 rows)
-  tconst                 0.00 %
-  averageRating          0.00 %
-  numVotes               0.00 %
+  tconst                          0    0.00 %
+  averageRating                   0    0.00 %
+  numVotes                        0    0.00 %
 
 Q2. Five columns with the highest percentage of null values
-  title.akas.attributes            99.47 %
-  title.basics.endYear               98.73 %
-  name.basics.deathYear             98.32 %
-  name.basics.birthYear             95.66 %
-  title.principals.job                   80.66 %
+  title.akas.attributes                99.47 %
+  title.basics.endYear                 98.73 %
+  name.basics.deathYear                98.32 %
+  name.basics.birthYear                95.66 %
+  title.principals.job                 80.66 %
+
+Q3. Other data quality issues
+
+Primary keys
+  name.basics        key (nconst): 0 missing, 0 duplicated
+  title.basics       key (tconst): 0 missing, 0 duplicated
+  title.akas         key (titleId, ordering): 0 missing, 0 duplicated
+  title.crew         key (tconst): 0 missing, 0 duplicated
+  title.episode      key (tconst): 0 missing, 0 duplicated
+  title.principals   key (tconst, ordering): 0 missing, 0 duplicated
+  title.ratings      key (tconst): 0 missing, 0 duplicated
+
+Values that are not valid numbers
+  name.basics.birthYear                          0
+  name.basics.deathYear                          0
+  title.basics.isAdult                           0
+  title.basics.startYear                         0
+  title.basics.endYear                           0
+  title.basics.runtimeMinutes                    0
+  title.akas.ordering                            0
+  title.akas.isOriginalTitle                     0
+  title.episode.seasonNumber                     0
+  title.episode.episodeNumber                    0
+  title.principals.ordering                      0
+  title.ratings.averageRating                    0
+  title.ratings.numVotes                         0
+
+Inconsistent values inside a table
+  name.basics      deathYear < birthYear                                        28 (0.0002 %)
+  name.basics      birthYear > 2026                                              0 (0.0000 %)
+  name.basics      deathYear > 2026                                              0 (0.0000 %)
+  title.basics     runtimeMinutes <= 0                                           4 (0.0000 %)
+  title.basics     runtimeMinutes > 1440 (over 24 hours)                       210 (0.0016 %)
+  title.basics     endYear < startYear                                           0 (0.0000 %)
+  title.basics     endYear set on a title that is not a series                   0 (0.0000 %)
+  title.basics     startYear > 2026 (announced titles)                       6,156 (0.0475 %)
+  title.basics     isAdult not in (0, 1)                                         0 (0.0000 %)
+  title.akas       isOriginalTitle not in (0, 1)                                 0 (0.0000 %)
+  title.episode    episode is its own parent (tconst = parentTconst)             0 (0.0000 %)
+  title.episode    negative seasonNumber or episodeNumber                        0 (0.0000 %)
+  title.ratings    averageRating not between 1 and 10                            0 (0.0000 %)
+  title.ratings    numVotes < 0                                                  0 (0.0000 %)
+
+Relations between tables
+  Missing parent record: title.principals.tconst -> title.basics
+      0 / 102,738,762 (0.0000 %)
+  Missing parent record: title.principals.nconst -> name.basics
+      7,183 / 102,738,762 (0.0070 %)
+  Missing parent record: title.ratings.tconst -> title.basics
+      0 / 1,731,756 (0.0000 %)
+  Missing parent record: title.crew.tconst -> title.basics
+      0 / 12,958,477 (0.0000 %)
+  Missing parent record: title.crew.directors -> name.basics
+      423 / 9,591,028 (0.0044 %)
+  Missing parent record: title.crew.writers -> name.basics
+      1,148 / 15,240,881 (0.0075 %)
+  Missing parent record: title.episode.tconst -> title.basics
+      0 / 10,030,795 (0.0000 %)
+  Missing parent record: title.episode.parentTconst -> title.basics
+      5 / 10,030,795 (0.0000 %)
+  Missing parent record: title.akas.titleId -> title.basics
+      0 / 60,385,482 (0.0000 %)
+  Missing parent record: name.basics.knownForTitles -> title.basics
+      0 / 25,582,666 (0.0000 %)
+  Principals (distinct people) who died before they were born
+      20 / 7,269,789 (0.0003 %)
+  Principal credits on a title released before the person was born
+      3,109 / 38,515,222 (0.0081 %)
+  Episodes whose titleType is not 'tvEpisode'
+      0 / 10,030,795 (0.0000 %)
+
+Q4. Handling applied by the pipeline
+
+  table                   raw rows    clean rows     dropped
+  name.basics           15,812,577    15,812,577           0
+  title.basics          12,958,477    12,958,477           0
+  title.akas            60,385,482    60,385,482           0
+  title.crew            12,958,477    12,958,477           0
+  title.episode         10,030,795    10,030,795           0
+  title.principals     102,738,762   102,738,762           0
+  title.ratings          1,731,756     1,731,756           0
+
+  Inconsistent values and what the cleaning does with them
+  name.basics      deathYear < birthYear                                        28  -> both years set to null, flagged in dq_death_before_birth
+  name.basics      birthYear > 2026                                              0  -> kept
+  name.basics      deathYear > 2026                                              0  -> kept
+  title.basics     runtimeMinutes <= 0                                           4  -> set to null
+  title.basics     runtimeMinutes > 1440 (over 24 hours)                       210  -> kept
+  title.basics     endYear < startYear                                           0  -> endYear set to null, flagged in dq_end_before_start
+  title.basics     endYear set on a title that is not a series                   0  -> kept
+  title.basics     startYear > 2026 (announced titles)                       6,156  -> kept
+  title.basics     isAdult not in (0, 1)                                         0  -> becomes false
+  title.akas       isOriginalTitle not in (0, 1)                                 0  -> becomes false
+  title.episode    episode is its own parent (tconst = parentTconst)             0  -> kept
+  title.episode    negative seasonNumber or episodeNumber                        0  -> kept
+  title.ratings    averageRating not between 1 and 10                            0  -> set to null
+  title.ratings    numVotes < 0                                                  0  -> kept
+
+  - '\N' and empty strings are stored as null; other null values are kept.
+  - Rows without a primary key are dropped; duplicated keys keep one row.
+  - Numeric columns are cast with try_cast: invalid numbers become null.
+  - List columns are split into arrays; characters is parsed as JSON.
+  - Missing parent records are kept and only counted (inner joins drop them later).
