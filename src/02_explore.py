@@ -13,6 +13,7 @@ from pyspark.sql import Window
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 import config
+import helpers
 
 REPORT_FILE = config.REPORTS_DIR / "02_exploration.txt"
 MIN_FEATURE_RUNTIME = 40  # feature-length film (AMPAS / BFI definition)
@@ -36,13 +37,6 @@ MIN_CAREER_VOTES = 1_000
 MIN_RATING_DROP = 0.5  # early average must beat late average by this much
 
 MIN_ROLE_MOVIES = 3  # min movies as director, writer or actor for that role to count
-
-
-def write(report, text=""):
-    """Print a line to the terminal and write it to the report."""
-    print(text)
-    report.write(text + "\n")
-    report.flush()
 
 
 def read_clean(spark, name):
@@ -81,19 +75,19 @@ def q1_runtime_outliers(movie_genres, report):
         .withColumn("z_score", (F.col("runtimeMinutes") - F.col("avg_runtime")) / F.col("std_runtime"))
         .filter(F.abs(F.col("z_score")) > Z_THRESHOLD)
     )
-    write(report, "\nQ1. Feature-length movies with an unusual runtime for their genre")
-    write(report, f"  Outliers (|z| > {Z_THRESHOLD}): {outliers.count():,}")
+    helpers.write(report, "\nQ1. Feature-length movies with an unusual runtime for their genre")
+    helpers.write(report, f"  Outliers (|z| > {Z_THRESHOLD}): {outliers.count():,}")
     summary = (outliers.groupBy("genre")
                .agg(F.count("*").alias("outlier_count"), F.round(F.first("avg_runtime"), 1).alias("avg_runtime"))
                .orderBy(F.desc("outlier_count")))
-    write(report, summary.toPandas().to_string(index=False))
-    write(report)
-    write(report, "  Most extreme examples:")
+    helpers.write(report, summary.toPandas().to_string(index=False))
+    helpers.write(report)
+    helpers.write(report, "  Most extreme examples:")
     top = (outliers.orderBy(F.desc(F.abs("z_score")))
            .select("primaryTitle", "startYear", "genre", "runtimeMinutes", F.round("z_score", 1).alias("z"))
            .limit(15))
-    write(report, top.toPandas().to_string(index=False))
-    write(report)
+    helpers.write(report, top.toPandas().to_string(index=False))
+    helpers.write(report)
 
 
 def q2_top_genres_per_year(movie_genres, report):
@@ -110,9 +104,9 @@ def q2_top_genres_per_year(movie_genres, report):
         .filter(F.col("rank") <= TOP_N)
         .orderBy("startYear", "rank")
     )
-    write(report, f"\nQ2. Top {TOP_N} genres per year ({FIRST_YEAR}-{LAST_YEAR}), by total votes")
-    write(report, top.toPandas().to_string(index=False))
-    write(report)
+    helpers.write(report, f"\nQ2. Top {TOP_N} genres per year ({FIRST_YEAR}-{LAST_YEAR}), by total votes")
+    helpers.write(report, top.toPandas().to_string(index=False))
+    helpers.write(report)
     return top
 
 
@@ -136,17 +130,17 @@ def q3_top_vs_rest(movie_genres, top_genres, report):
         )
         .orderBy("startYear")
     )
-    write(report, f"\nQ3. Top {TOP_N} genres vs the other genres, per year")
-    write(report, per_year.toPandas().to_string(index=False))
+    helpers.write(report, f"\nQ3. Top {TOP_N} genres vs the other genres, per year")
+    helpers.write(report, per_year.toPandas().to_string(index=False))
     overall = rows.groupBy("is_top").agg(
         F.count("*").alias("movie_genre_rows"),
         F.sum("numVotes").alias("total_votes"),
         F.round(F.avg("averageRating"), 2).alias("avg_rating"),
     )
-    write(report)
-    write(report, f"  Overall {FIRST_YEAR}-{LAST_YEAR}:")
-    write(report, overall.toPandas().to_string(index=False))
-    write(report)
+    helpers.write(report)
+    helpers.write(report, f"  Overall {FIRST_YEAR}-{LAST_YEAR}:")
+    helpers.write(report, overall.toPandas().to_string(index=False))
+    helpers.write(report)
 
 
 def q4_one_hit_directors(spark, movies, report):
@@ -174,10 +168,10 @@ def q4_one_hit_directors(spark, movies, report):
         .select("primaryName", "hit_title", "hit_rating", "other_count", "other_avg")
         .orderBy(F.desc("hit_rating"))
     )
-    write(report, f"\nQ4. Directors with one movie >= {HIT_RATING} and >= {MIN_OTHER_MOVIES} others averaging <= {FLOP_AVG}")
-    write(report, f"  Directors found: {result.count():,}")
-    write(report, result.limit(20).toPandas().to_string(index=False))
-    write(report)
+    helpers.write(report, f"\nQ4. Directors with one movie >= {HIT_RATING} and >= {MIN_OTHER_MOVIES} others averaging <= {FLOP_AVG}")
+    helpers.write(report, f"  Directors found: {result.count():,}")
+    helpers.write(report, result.limit(20).toPandas().to_string(index=False))
+    helpers.write(report)
 
 
 def q5_series_decline(spark, report):
@@ -218,11 +212,11 @@ def q5_series_decline(spark, report):
         .orderBy(F.desc("season_count"))
     )
     total, found = per_series.count(), result.count()
-    write(report, f"\nQ5. Series whose worst episode is in the last season "
-                  f"and best episode in seasons 1-{EARLY_SEASONS}")
-    write(report, f"  Series analysed: {total:,}  |  matching: {found:,} ({100 * found / total:.1f}%)")
-    write(report, result.limit(20).toPandas().to_string(index=False))
-    write(report)
+    helpers.write(report, f"\nQ5. Series whose worst episode is in the last season "
+                          f"and best episode in seasons 1-{EARLY_SEASONS}")
+    helpers.write(report, f"  Series analysed: {total:,}  |  matching: {found:,} ({100 * found / total:.1f}%)")
+    helpers.write(report, result.limit(20).toPandas().to_string(index=False))
+    helpers.write(report)
 
 
 REGION_LANGUAGE = {
@@ -272,18 +266,18 @@ def q6_actors_multilingual_success(spark, movies, report):
         .cache()
     )
     n_hits, n_with_lang = hits.count(), hits_lang.count()
-    write(report, f"\nQ6. Actors with successful movies (>= {SUCCESS_RATING}, "
-                  f">= {SUCCESS_VOTES:,} votes) in several original languages")
-    write(report, f"  Successful movies: {n_hits:,}  |  with a known language: "
-                  f"{n_with_lang:,} ({100 * n_with_lang / n_hits:.1f}%)")
-    write(report, f"  Actors with >= 2 languages: {per_actor.count():,}")
-    write(report, f"  Actors with >= 3 languages: "
+    helpers.write(report, f"\nQ6. Actors with successful movies (>= {SUCCESS_RATING}, "
+                          f">= {SUCCESS_VOTES:,} votes) in several original languages")
+    helpers.write(report, f"  Successful movies: {n_hits:,}  |  with a known language: "
+                          f"{n_with_lang:,} ({100 * n_with_lang / n_hits:.1f}%)")
+    helpers.write(report, f"  Actors with >= 2 languages: {per_actor.count():,}")
+    helpers.write(report, f"  Actors with >= 3 languages: "
                   f"{per_actor.filter(F.col('language_count') >= 3).count():,}")
     top = (per_actor.join(names, "nconst", "left")
            .select("primaryName", "language_count", "hit_count", "languages")
            .orderBy(F.desc("language_count"), F.desc("hit_count")))
-    write(report, top.limit(20).toPandas().to_string(index=False))
-    write(report)
+    helpers.write(report, top.limit(20).toPandas().to_string(index=False))
+    helpers.write(report)
 
 
 def q7_early_peak(spark, movies, report):
@@ -318,13 +312,13 @@ def q7_early_peak(spark, movies, report):
               .join(names, "nconst"))
 
     total, early = career.count(), result.count()
-    write(report, f"\nQ7. Actors ({MIN_CAREER_YEARS}+ years, {MIN_CAREER_MOVIES}+ movies) whose popularity peaked early")
-    write(report, f"  {early:,} of {total:,} eligible actors ({100 * early / total:.1f} %) peaked early")
+    helpers.write(report, f"\nQ7. Actors ({MIN_CAREER_YEARS}+ years, {MIN_CAREER_MOVIES}+ movies) whose popularity peaked early")
+    helpers.write(report, f"  {early:,} of {total:,} eligible actors ({100 * early / total:.1f} %) peaked early")
     pdf = (result.orderBy(F.desc("drop"))
            .select("primaryName", "movie_count", "first_year", "last_year", "early_avg", "late_avg", "drop", "best_title")
            .limit(20).toPandas())
-    write(report, pdf.to_string(index=False))
-    write(report)
+    helpers.write(report, pdf.to_string(index=False))
+    helpers.write(report)
     return result
 
 
@@ -362,17 +356,17 @@ def q8_multi_talented(spark, movies, report):
     )
     is_multi = F.col("n_roles") > 1
 
-    write(report, f"\nQ8. Multi-talented people (>= 2 roles, each in >= {MIN_ROLE_MOVIES} movies)")
-    write(report, f"  Multi-talented people: {talented.count():,}")
-    write(report, talented.groupBy("talents").count().orderBy(F.desc("count")).toPandas().to_string(index=False))
+    helpers.write(report, f"\nQ8. Multi-talented people (>= 2 roles, each in >= {MIN_ROLE_MOVIES} movies)")
+    helpers.write(report, f"  Multi-talented people: {talented.count():,}")
+    helpers.write(report, talented.groupBy("talents").count().orderBy(F.desc("count")).toPandas().to_string(index=False))
 
-    write(report, "\n  Ratings by role combination on the same movie:")
+    helpers.write(report, "\n  Ratings by role combination on the same movie:")
     by_combo = (per_movie.groupBy("combo")
                 .agg(F.count("*").alias("movie_roles"),
                      F.round(F.avg("averageRating"), 2).alias("avg_rating"),
                      F.round(F.avg("numVotes")).cast("long").alias("avg_votes"))
                 .orderBy(F.desc("movie_roles")))
-    write(report, by_combo.toPandas().to_string(index=False))
+    helpers.write(report, by_combo.toPandas().to_string(index=False))
 
     per_person = (
         per_movie.groupBy("nconst")
@@ -385,14 +379,14 @@ def q8_multi_talented(spark, movies, report):
     )
     n, better = per_person.count(), per_person.filter(F.col("gain") > 0).count()
     avg_gain = per_person.agg(F.avg("gain")).first()[0]
-    write(report, f"\n  Same person, multi-role vs single-role movies: {n:,} people")
-    write(report, f"  Better rated when holding several roles: {better:,} ({100 * better / n:.1f} %)"
+    helpers.write(report, f"\n  Same person, multi-role vs single-role movies: {n:,} people")
+    helpers.write(report, f"  Better rated when holding several roles: {better:,} ({100 * better / n:.1f} %)"
                   f"  |  average gain: {avg_gain:+.2f}")
     top = (per_person.join(names, "nconst").join(talented, "nconst")
            .select("primaryName", "talents", "multi_movies", "multi_avg", "single_avg", "gain")
            .orderBy(F.desc("multi_movies")).limit(20))
-    write(report, top.toPandas().to_string(index=False))
-    write(report)
+    helpers.write(report, top.toPandas().to_string(index=False))
+    helpers.write(report)
 
 
 def main():
@@ -408,10 +402,10 @@ def main():
     movie_genres = explode_genres(movies).cache()
 
     with open(REPORT_FILE, "w", encoding="utf-8") as report:
-        write(report, "IMDb - Data exploration")
-        write(report)
-        write(report, f"Feature-length movies: {movies.count():,}")
-        write(report, f"(movie, genre) rows:   {movie_genres.count():,}")
+        helpers.write(report, "IMDb - Data exploration")
+        helpers.write(report)
+        helpers.write(report, f"Feature-length movies: {movies.count():,}")
+        helpers.write(report, f"(movie, genre) rows:   {movie_genres.count():,}")
         
         # Questions, one function per question
         q1_runtime_outliers(movie_genres, report)
