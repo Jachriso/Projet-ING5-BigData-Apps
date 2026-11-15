@@ -30,6 +30,10 @@ EARLY_SEASONS = 2
 
 SUCCESS_RATING, SUCCESS_VOTES = 7.0, 10_000
 
+MIN_CAREER_YEARS, MIN_CAREER_MOVIES = 20, 15
+MIN_CAREER_VOTES = 1_000
+MIN_RATING_DROP = 0.5  # early average must beat late average by this much
+
 
 def write(report, text=""):
     """Print a line to the terminal and write it to the report."""
@@ -110,7 +114,7 @@ def q2_top_genres_per_year(movie_genres, report):
 
 
 def q3_top_vs_rest(movie_genres, top_genres, report):
-    """Compare, for each year, the top 3 (TOP_N) genres with all the other genres:
+    """Compare, for each year, the top 3 (TOP_N) genres with all the other genres :
     share of total votes and average rating."""
     flags = top_genres.select("startYear", "genre", F.lit(True).alias("is_top"))
     rows = (
@@ -185,8 +189,7 @@ def q5_series_decline(spark, report):
                .agg(F.count("*").alias("episode_count"))
                .filter(F.col("episode_count") >= MIN_EPISODES))
     series = (seasons.groupBy("parentTconst")
-              .agg(F.count("*").alias("season_count"),
-                   F.max("seasonNumber").alias("last_season"))
+              .agg(F.count("*").alias("season_count"), F.max("seasonNumber").alias("last_season"))
               .filter(F.col("season_count") >= MIN_SEASONS))
     rated = (
         episodes
@@ -230,14 +233,13 @@ REGION_LANGUAGE = {
 
 def original_language(spark):
     """Estimate each title's original language from the akas matching the
-    original title: their language if given, otherwise the main language of
+    original title : their language if given, otherwise the main language of
     their region. IMDb datasets do not provide the original language."""
     akas = read_clean(spark, "title.akas")
     basics = read_clean(spark, "title.basics").select("tconst", "originalTitle")
     region_lang = F.create_map(*[F.lit(x) for kv in REGION_LANGUAGE.items() for x in kv])
     counts = (
-        akas.join(basics, (akas["titleId"] == basics["tconst"])
-                  & (F.lower(akas["title"]) == F.lower(basics["originalTitle"])))
+        akas.join(basics, (akas["titleId"] == basics["tconst"]) & (F.lower(akas["title"]) == F.lower(basics["originalTitle"])))
         .withColumn("lang", F.coalesce(F.col("language"), region_lang[F.col("region")]))
         .filter(F.col("lang").isNotNull())
         .groupBy("tconst", "lang").agg(F.count("*").alias("n"))
@@ -251,8 +253,7 @@ def original_language(spark):
 def q6_actors_multilingual_success(spark, movies, report):
     """Return actors with successful movies (rating >= SUCCESS_RATING and
     votes >= SUCCESS_VOTES) in at least 2 and 3 original languages."""
-    hits = movies.filter((F.col("averageRating") >= SUCCESS_RATING)
-                         & (F.col("numVotes") >= SUCCESS_VOTES))
+    hits = movies.filter((F.col("averageRating") >= SUCCESS_RATING) & (F.col("numVotes") >= SUCCESS_VOTES))
     hits_lang = hits.join(original_language(spark), "tconst")
     actors = (read_clean(spark, "title.principals")
               .filter(F.col("category").isin("actor", "actress"))
@@ -282,6 +283,49 @@ def q6_actors_multilingual_success(spark, movies, report):
     write(report)
 
 
+def q7_early_peak(spark, movies, report):
+    """Return actors (>= 20 years, >= 15 movies) whose movies in the first
+    half of their career are rated clearly higher than in the second half."""
+    principals = (read_clean(spark, "title.principals")
+                  .filter(F.col("category").isin("actor", "actress"))
+                  .select("tconst", "nconst").distinct())
+    names = read_clean(spark, "name.basics").select("nconst", "primaryName")
+    played = principals.join(
+        movies.filter((F.col("numVotes") >= MIN_CAREER_VOTES) & F.col("startYear").isNotNull()), "tconst")
+
+    by_actor = Window.partitionBy("nconst")
+    best = by_actor.orderBy(F.desc("averageRating"), F.desc("numVotes"))
+    played = (played
+              .withColumn("first_year", F.min("startYear").over(by_actor))
+              .withColumn("last_year", F.max("startYear").over(by_actor))
+              .withColumn("is_best", F.row_number().over(best) == 1))
+    mid = (F.col("first_year") + F.col("last_year")) / 2
+    is_early = F.col("startYear") <= mid
+
+    career = played.groupBy("nconst", "first_year", "last_year").agg(
+        F.count("*").alias("movie_count"),
+        F.round(F.avg(F.when(is_early, F.col("averageRating"))), 2).alias("early_avg"),
+        F.round(F.avg(F.when(~is_early, F.col("averageRating"))), 2).alias("late_avg"),
+        F.max(F.when(F.col("is_best"), F.col("startYear"))).alias("best_year"),
+        F.first(F.when(F.col("is_best"), F.col("primaryTitle")), ignorenulls=True).alias("best_title"),
+    ).filter((F.col("last_year") - F.col("first_year") >= MIN_CAREER_YEARS) & (F.col("movie_count") >= MIN_CAREER_MOVIES))
+
+    result = (career
+              .withColumn("drop", F.round(F.col("early_avg") - F.col("late_avg"), 2))
+              .filter((F.col("drop") >= MIN_RATING_DROP) & (F.col("best_year") <= (F.col("first_year") + F.col("last_year")) / 2))
+              .join(names, "nconst"))
+
+    total, early = career.count(), result.count()
+    write(report, f"\nQ7. Actors ({MIN_CAREER_YEARS}+ years, {MIN_CAREER_MOVIES}+ movies) whose popularity peaked early")
+    write(report, f"  {early:,} of {total:,} eligible actors ({100 * early / total:.1f} %) peaked early")
+    pdf = (result.orderBy(F.desc("drop"))
+           .select("primaryName", "movie_count", "first_year", "last_year", "early_avg", "late_avg", "drop", "best_title")
+           .limit(20).toPandas())
+    write(report, pdf.to_string(index=False))
+    write(report)
+    return result
+
+
 def main():
     spark = (
         SparkSession.builder.appName("03_explore")
@@ -307,6 +351,7 @@ def main():
         q4_one_hit_directors(spark, movies, report)
         q5_series_decline(spark, report)
         q6_actors_multilingual_success(spark, movies, report)
+        q7_early_peak(spark, movies, report)
 
     spark.stop()
 
