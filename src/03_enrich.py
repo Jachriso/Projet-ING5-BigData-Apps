@@ -4,19 +4,14 @@
 # Source: Wikidata + English Wikipedia (human-authored, open licence).
 # Results are written to data/enriched/ and reports/03_enrichment.txt.
 # Paths and Spark settings come from config.py.
-#
-# Pipeline:
-#   A. Selection (Spark)        : which films and which people to enrich
-#   B. Gathering (Python + HTTP): calls to Wikidata / Wikipedia, raw JSONL files
-#   C. Cleaning (Spark)         : schema enforcement, cleaning, joins, Parquet
-#
-# Run from the project root: python src/03_enrich.py
+
 
 import json
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib import response
 
 import requests
 from pyspark.sql import SparkSession, Window
@@ -49,33 +44,6 @@ RAW_FILMS_FILE = config.ENRICHED_DIR / "raw" / "films.jsonl"
 RAW_PEOPLE_FILE = config.ENRICHED_DIR / "raw" / "people.jsonl"
 REPORT_FILE = config.REPORTS_DIR / "03_enrichment.txt"
 
-
-def select_top_films(spark):
-    """Top TOP_N_FILMS feature-length films per (genre, year), 1980-2025.
-
-    Returns a DataFrame [tconst, primaryTitle, startYear, genre, numVotes, rank].
-    A film with several genres appears once per genre.
-    """
-    # TODO:
-    #  1. title.basics: titleType == "movie", runtimeMinutes >= MIN_FEATURE_RUNTIME,
-    #     startYear between FIRST_YEAR and LAST_YEAR
-    #  2. join title.ratings on tconst (inner: a film without votes cannot be "top")
-    #  3. explode genres -> one row per (film, genre)
-    #  4. Window.partitionBy("startYear", "genre").orderBy(F.desc("numVotes"))
-    #     + F.row_number() -> keep rank <= TOP_N_FILMS
-    by_year = Window.partitionBy("startYear").orderBy(F.desc("total_votes"))
-    top = (
-        config.CLEAN_DIR.join("title.basics.parquet").join("title.ratings.parquet")
-        .filter(F.col("startYear").between(FIRST_YEAR, LAST_YEAR))
-        .groupBy("startYear", "genre")
-        .agg(F.sum("numVotes").alias("total_votes"),
-                F.count("*").alias("movie_count"))
-        .withColumn("rank", F.row_number().over(by_year))
-        .filter(F.col("rank") <= TOP_N_FILMS)
-        .orderBy("startYear", "rank")
-    )
-    
-    return top
 
 
 def select_top_films(spark):
@@ -124,16 +92,21 @@ def select_principals(spark, films):
 
 
 def http_get(url, params):
-    """GET request that respects the Wikimedia rate limits. Returns the JSON body.
+    """GET request that respects the Wikimedia rate limits. Returns the JSON body.    """
+    for attempt in range(1, MAX_RETRIES + 1):
+        time.sleep(REQUEST_DELAY)
+        response = requests.get(url, params=params, headers={"User-Agent": USER_AGENT}, timeout=30)
+        
+        if response.status_code == 200:
+            return response.json()
 
-    TODO:
-      - send the headers {"User-Agent": USER_AGENT}
-      - time.sleep(REQUEST_DELAY) before each request
-      - on status 429 or 503: wait for the "Retry-After" header (or an increasing
-        delay), then retry, at most MAX_RETRIES times
-      - response.raise_for_status() for any other error
-    """
-    ...
+        if response.status_code in (429, 500, 502, 503, 504):
+            time.sleep(2 ** attempt)     # wait longer than usual: the server asked us to slow down
+            continue                     # next loop turn = new attempt
+        
+        response.raise_for_status()      # any other error ends the program immediately
+    
+    raise RuntimeError(f"Giving up after {MAX_RETRIES} attempts: {url}")
 
 
 def load_done_ids(path, key):
