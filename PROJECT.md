@@ -123,6 +123,14 @@ curl.exe -fL -o C:\hadoop\bin\hadoop.dll https://raw.githubusercontent.com/cdarl
 
 Close and reopen the terminal (and VS Code) so that the new variables are taken into account.
 
+#### 3.4 Docker (streaming only)
+
+The streaming step runs Kafka in a Docker container. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it before running the streaming step. Check with :
+
+```bash
+docker --version
+```
+
 ### 4. Set up the Python virtual environment
 
 From the project root, create the virtual environment and install the pinned dependencies of `requirements.txt`:
@@ -170,9 +178,24 @@ With the virtual environment activated, run each step from the project root, in 
 | Data preparation | `python src/01_clean.py` | `data/clean/*.parquet`, `reports/01_data_preparation.txt` | ~25 min |
 | Data exploration | `python src/02_explore.py` | `reports/02_exploration.txt` | |
 | Data enrichment | `python src/03_enrich.py` | `data/enriched/*.parquet`, `reports/03_enrichment.txt` | |
-| Streaming | `...` (Kafka must be running) | `...` | |
+| Streaming | `python src/04_wiki_producer.py` (terminal 2) + `python src/04_streaming.py` (terminal 3) | Console output, `reports/04_streaming.txt` | Runs until stopped (≥ 15 min) |
 
 Each step reads the output of the previous ones: `src/02_explore.py` and `src/03_enrich.py` need `data/clean/` to be filled by `src/01_clean.py` first.
 
+#### Streaming step
+
+Open three terminals at the project root, with the virtual environment activated:
+
+```bash
+docker compose up -d                 # 1. start Kafka (localhost:9092)
+python src/04_wiki_producer.py       # 2. send Wikipedia edits to the topic `wiki-changes`
+python src/04_streaming.py           # 3. Spark job : match edits with IMDb titles and people
+```
+
+The first run downloads the Spark Kafka connector, so it needs internet. To stop, press Ctrl+C in both Python terminals, then run :
+
+```bash
+docker compose down
+```
 
 ## AI & LLM tools usage
