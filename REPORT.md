@@ -6,6 +6,113 @@ All final query outputs, tables, streaming metrics, etc.
 - Alternatives considered and trade-offs made
 
 ## Preparation
+Full output of the 1st script: [reports/01_data_preparation.txt](reports/01_data_preparation.txt)
+
+Our cleaning script is divided in 5 different steps : 
+1. Read the data sets in the `data/raw` folder
+2. Report the null and missing values of each columns of each dataset
+3. Common cleaning of the tables
+4. Specific cleaning for  each tables
+5. Save the tables in the `data/clean` folder 
+
+Those steps enable us to answer the next 4 questions : 
+1. For each column of each table in the IMDB dataset, calculate the percentage of nulls, missing, or empty records
+2. Which five columns across the entire dataset have the highest percentage of null values?
+3. Identify other data quality issues for the dataset such as principals who died before they were born, foreign keys with missing parent records, etc.
+4. Design and implement a way to handle these values.
+
+
+### 1. Percentage of nulls, missing, or empty records
+
+#### name.basics (15,812,577 rows)
+| Column | Percentage |
+|------|---------|
+| nconst | 0.00 % |
+| primaryName | 0.00 % |
+| birthYear | 95.66 % |
+| deathYear | 98.32 % |
+| primaryProfession | 20.36 % |
+| knownForTitles | 12.12 % |
+
+#### title.basics (12,958,477 rows)
+| Column | Percentage |
+|------|---------|
+| tconst | 0.00 % |
+| titleType | 0.00 % |
+| primaryTitle | 0.00 % |
+| originalTitle | 0.00 % |
+| isAdult | 0.00 % |
+| startYear | 11.48 % |
+| endYear | 98.73 % |
+| runtimeMinutes | 62.18 % |
+| genres | 4.23 % |
+
+#### title.akas (60,385,482 rows)
+| Column | Percentage |
+|------|---------|
+| titleId | 0.00 % |
+| ordering | 0.00 % |
+| title | 0.00 % |
+| region | 21.53 % |
+| language | 32.55 % |
+| types | 66.86 % |
+| attributes | 99.47 % |
+| isOriginalTitle | 0.00 % |
+
+#### title.crew (12,958,477 rows)
+| Column | Percentage |
+|------|---------|
+| tconst | 0.00 % |
+| directors | 44.68 % |
+| writers | 49.62 % |
+
+#### title.episode (10,030,795 rows)
+| Column | Percentage |
+|------|---------|
+| tconst | 0.00 % |
+| parentTconst | 0.00 % |
+| seasonNumber | 21.17 % |
+| episodeNumber | 21.17 % |
+
+#### title.principals (102,738,762 rows)
+| Column | Percentage |
+|------|---------|
+| tconst | 0.00 % |
+| ordering | 0.00 % |
+| nconst | 0.00 % |
+| category | 0.00 % |
+| job | 80.66 % |
+| characters | 51.28 % |
+
+#### title.ratings (1,731,756 rows)
+| Column | Percentage |
+|------|---------|
+| tconst | 0.00 % |
+| averageRating | 0.00 % |
+| numVotes | 0.00 % |
+
+
+Un tableau par table, à reprendre de reports/01_data_preparation.txt.
+En une ou deux phrases : ce que tu comptes comme « manquant » (\N, chaîne vide).
+
+2. Top 5 des colonnes les plus vides (Q2)
+
+Le tableau du top 5.
+Ton interprétation : est-ce une donnée manquante ou un null « normal » (« ne s'applique pas ») ? Pense à endYear, deathYear, attributes.
+
+3. Autres problèmes de qualité (Q3)
+
+La liste des problèmes trouvés, avec leur nombre.
+⚠️ Il te manque des chiffres ici. La version simplifiée de 01_clean.py ne calcule que Q1 et Q2. Elle corrige bien certaines incohérences (décès avant naissance, endYear < startYear, durée ≤ 0, note hors de 1 à 10), mais sans les compter, et elle ne cherche pas les clés étrangères orphelines, que le sujet cite pourtant en exemple. Il faut ajouter ces comptages au script avant d'écrire cette section.
+
+4. Traitement appliqué (Q4)
+
+Ce que fait le pipeline : \N et vides → null, suppression des clés nulles et des doublons, typage avec try_cast, découpage des listes, colonnes dq_*, écriture en Parquet.
+
+5. Explication méthodologique
+
+La méthode et pourquoi : par exemple, pourquoi garder les null plutôt que supprimer les lignes, pourquoi Parquet, pourquoi Spark, pourquoi quote="".
+Les alternatives et les compromis : supprimer avec un seuil (ta première idée des 10 %), remplacer par une valeur (0, endYear = startYear), CSV au lieu de Parquet… Pour chacune : ce qu'on y gagne et ce qu'on y perd.
 
 ## Exploration
 
