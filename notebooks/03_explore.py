@@ -34,6 +34,8 @@ MIN_CAREER_YEARS, MIN_CAREER_MOVIES = 20, 15
 MIN_CAREER_VOTES = 1_000
 MIN_RATING_DROP = 0.5  # early average must beat late average by this much
 
+MIN_ROLE_MOVIES = 3  # min movies as director, writer or actor for that role to count
+
 
 def write(report, text=""):
     """Print a line to the terminal and write it to the report."""
@@ -290,8 +292,7 @@ def q7_early_peak(spark, movies, report):
                   .filter(F.col("category").isin("actor", "actress"))
                   .select("tconst", "nconst").distinct())
     names = read_clean(spark, "name.basics").select("nconst", "primaryName")
-    played = principals.join(
-        movies.filter((F.col("numVotes") >= MIN_CAREER_VOTES) & F.col("startYear").isNotNull()), "tconst")
+    played = principals.join(movies.filter((F.col("numVotes") >= MIN_CAREER_VOTES) & F.col("startYear").isNotNull()), "tconst")
 
     by_actor = Window.partitionBy("nconst")
     best = by_actor.orderBy(F.desc("averageRating"), F.desc("numVotes"))
@@ -326,6 +327,73 @@ def q7_early_peak(spark, movies, report):
     return result
 
 
+def q8_multi_talented(spark, movies, report):
+    """Return people with >= 2 roles (director, writer, actor), each in
+    >= 3 movies (MIN_ROLE_MOVIES), and compare their ratings when they hold
+    several roles on the same movie versus a single role."""
+    crew = read_clean(spark, "title.crew")
+    principals = read_clean(spark, "title.principals")
+    names = read_clean(spark, "name.basics").select("nconst", "primaryName")
+    rated = (movies.filter(F.col("numVotes") >= MIN_CAREER_VOTES).select("tconst", "averageRating", "numVotes"))
+
+    roles = (
+        crew.select("tconst", F.explode("directors").alias("nconst"), F.lit("director").alias("role"))
+        .unionByName(crew.select("tconst", F.explode("writers").alias("nconst"), F.lit("writer").alias("role")))
+        .unionByName(principals.filter(F.col("category").isin("actor", "actress")).select("tconst", "nconst", F.lit("actor").alias("role")))
+        .distinct()
+        .join(rated.select("tconst"), "tconst")
+    )
+
+    talented = (
+        roles.groupBy("nconst", "role").agg(F.count("*").alias("n"))
+        .filter(F.col("n") >= MIN_ROLE_MOVIES)
+        .groupBy("nconst")
+        .agg(F.count("*").alias("role_count"), F.concat_ws("+", F.array_sort(F.collect_list("role"))).alias("talents"))
+        .filter(F.col("role_count") >= 2)
+        .cache()
+    )
+
+    per_movie = (
+        roles.join(talented.select("nconst"), "nconst")
+        .groupBy("nconst", "tconst")
+        .agg(F.count("*").alias("n_roles"), F.concat_ws("+", F.array_sort(F.collect_list("role"))).alias("combo"))
+        .join(rated, "tconst")
+    )
+    is_multi = F.col("n_roles") > 1
+
+    write(report, f"\nQ8. Multi-talented people (>= 2 roles, each in >= {MIN_ROLE_MOVIES} movies)")
+    write(report, f"  Multi-talented people: {talented.count():,}")
+    write(report, talented.groupBy("talents").count().orderBy(F.desc("count")).toPandas().to_string(index=False))
+
+    write(report, "\n  Ratings by role combination on the same movie:")
+    by_combo = (per_movie.groupBy("combo")
+                .agg(F.count("*").alias("movie_roles"),
+                     F.round(F.avg("averageRating"), 2).alias("avg_rating"),
+                     F.round(F.avg("numVotes")).cast("long").alias("avg_votes"))
+                .orderBy(F.desc("movie_roles")))
+    write(report, by_combo.toPandas().to_string(index=False))
+
+    per_person = (
+        per_movie.groupBy("nconst")
+        .agg(F.round(F.avg(F.when(is_multi, F.col("averageRating"))), 2).alias("multi_avg"),
+             F.round(F.avg(F.when(~is_multi, F.col("averageRating"))), 2).alias("single_avg"),
+             F.sum(F.when(is_multi, 1).otherwise(0)).alias("multi_movies"))
+        .filter(F.col("multi_avg").isNotNull() & F.col("single_avg").isNotNull())
+        .withColumn("gain", F.round(F.col("multi_avg") - F.col("single_avg"), 2))
+        .cache()
+    )
+    n, better = per_person.count(), per_person.filter(F.col("gain") > 0).count()
+    avg_gain = per_person.agg(F.avg("gain")).first()[0]
+    write(report, f"\n  Same person, multi-role vs single-role movies: {n:,} people")
+    write(report, f"  Better rated when holding several roles: {better:,} ({100 * better / n:.1f} %)"
+                  f"  |  average gain: {avg_gain:+.2f}")
+    top = (per_person.join(names, "nconst").join(talented, "nconst")
+           .select("primaryName", "talents", "multi_movies", "multi_avg", "single_avg", "gain")
+           .orderBy(F.desc("multi_movies")).limit(20))
+    write(report, top.toPandas().to_string(index=False))
+    write(report)
+
+
 def main():
     spark = (
         SparkSession.builder.appName("03_explore")
@@ -352,6 +420,7 @@ def main():
         q5_series_decline(spark, report)
         q6_actors_multilingual_success(spark, movies, report)
         q7_early_peak(spark, movies, report)
+        q8_multi_talented(spark, movies, report)
 
     spark.stop()
 
