@@ -1,3 +1,8 @@
+# Spark engine (Python API). Also needs Java 17 or 21, see PROJECT.md
 pyspark==4.3.0
+# Used by Spark's toPandas() to display small results (PySpark 4.3 supports pandas < 3)
 pandas==2.3.3
+# Fast Spark -> pandas transfer (Arrow)
 pyarrow==26.0.1
+# HTTP calls to Wikidata / Wikipedia (enrichment)
+requests==2.34.2

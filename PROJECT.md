@@ -29,8 +29,8 @@ The resulting layout is:
 data/
 ├── raw/        # Raw IMDb files (.tsv.gz), never modified
 ├── clean/      # Cleaned data (Parquet), produced by src/01_clean.py
-├── enriched/   # Wikidata / Wikipedia enrichment, produced by src/02_enrich.py
-└── gold/       # Final analysis tables, produced by src/03_transform.py
+├── enriched/   # Wikidata / Wikipedia enrichment, produced by src/03_enrich.py
+└── gold/       # Reserved for final analysis tables (currently unused)
 ```
 
 Bash:
@@ -69,30 +69,110 @@ foreach ($f in $files) {
 Get-ChildItem data/raw | Select-Object Name, @{Name = "MB"; Expression = { [math]::Round($_.Length / 1MB, 1) }}
 ```
 
-### 3. Set up the Python environment
+### 3. Install the system prerequisites (once per machine)
 
-Requirements: Python 3.14 and Java 21 (needed by Spark).
+#### 3.1 Python
+
+Python 3.14 (the project is developed and tested with 3.14). Check with:
+
+```bash
+python --version
+```
+
+#### 3.2 Java 21
+
+Spark runs on the Java Virtual Machine: PySpark 4.x needs **Java 17 or 21** and the `JAVA_HOME` environment variable.
+
+Windows (PowerShell):
+
+```powershell
+winget install EclipseAdoptium.Temurin.21.JDK
+```
+
+macOS / Linux:
+
+```bash
+brew install openjdk@21              # macOS
+sudo apt install openjdk-21-jdk      # Debian / Ubuntu
+```
+
+Close and reopen the terminal (and VS Code), then check that both commands print something:
+
+```bash
+java -version
+echo $JAVA_HOME                      # PowerShell: echo $env:JAVA_HOME
+```
+
+If `JAVA_HOME` is empty, set it to the JDK installation folder, for example on Windows:
+
+```powershell
+[Environment]::SetEnvironmentVariable("JAVA_HOME", "C:\Program Files\Eclipse Adoptium\<jdk-21 folder>", "User")
+```
+
+#### 3.3 Hadoop native binaries (Windows only)
+
+On Windows, Spark needs `winutils.exe` and `hadoop.dll` to write files (Parquet). Without them, `src/01_clean.py` fails when saving with `HADOOP_HOME and hadoop.home.dir are unset`. These are community builds of the Hadoop Windows binaries ([cdarlint/winutils](https://github.com/cdarlint/winutils)).
+
+```powershell
+New-Item -ItemType Directory -Force C:\hadoop\bin | Out-Null
+curl.exe -fL -o C:\hadoop\bin\winutils.exe https://raw.githubusercontent.com/cdarlint/winutils/master/hadoop-3.3.6/bin/winutils.exe
+curl.exe -fL -o C:\hadoop\bin\hadoop.dll https://raw.githubusercontent.com/cdarlint/winutils/master/hadoop-3.3.6/bin/hadoop.dll
+[Environment]::SetEnvironmentVariable("HADOOP_HOME", "C:\hadoop", "User")
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";C:\hadoop\bin", "User")
+```
+
+Close and reopen the terminal (and VS Code) so that the new variables are taken into account.
+
+### 4. Set up the Python virtual environment
+
+From the project root, create the virtual environment and install the pinned dependencies of `requirements.txt`:
+
+Bash (macOS / Linux / Git Bash):
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate        # PowerShell: .venv\Scripts\Activate.ps1
+source .venv/bin/activate            # Git Bash on Windows: source .venv/Scripts/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Paths and Spark settings (driver memory, shuffle partitions) are defined in `config.py`.
+PowerShell:
 
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
 
-### 4. Run the pipeline
+If PowerShell refuses to run `Activate.ps1` ("running scripts is disabled on this system"), allow local scripts once, then activate again:
 
-Run each step from the project root, in this order:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
 
-| Step | Command | Output |
-|------|---------|--------|
-| Data preparation | `python src/01_clean.py` | `data/clean/*.parquet`, `reports/01_data_preparation.txt` |
-| Data exploration | `python src/02_explore.py` | `reports/02_exploration.txt` |
-| Data enrichment | `...` | `...` |
-| Transformation | `...` | `...` |
-| Streaming | `...` (Kafka must be running) | `...` |
+Check the installation:
+
+```bash
+python -c "import pyspark, pandas, pyarrow, requests; print('pyspark', pyspark.__version__, '| pandas', pandas.__version__)"
+```
+
+> **NOTE:** The virtual environment must be **activated in every new terminal** before running a script. The prompt then starts with `(.venv)`.
+
+Paths and Spark settings (driver memory, shuffle partitions) are defined in `config.py`. Lower `SPARK_DRIVER_MEMORY` if the machine has less than 8 GB of RAM.
+
+### 5. Run the pipeline
+
+With the virtual environment activated, run each step from the project root, in this order:
+
+| Step | Command | Output | Indicative duration |
+|------|---------|--------|---------------------|
+| Data preparation | `python src/01_clean.py` | `data/clean/*.parquet`, `reports/01_data_preparation.txt` | ~25 min |
+| Data exploration | `python src/02_explore.py` | `reports/02_exploration.txt` | |
+| Data enrichment | `python src/03_enrich.py` | `data/enriched/*.parquet`, `reports/03_enrichment.txt` | |
+| Streaming | `...` (Kafka must be running) | `...` | |
+
+Each step reads the output of the previous ones: `src/02_explore.py` and `src/03_enrich.py` need `data/clean/` to be filled by `src/01_clean.py` first.
 
 
 ## AI & LLM tools usage
