@@ -50,8 +50,6 @@ RAW_PEOPLE_FILE = config.ENRICHED_DIR / "raw" / "people.jsonl"
 REPORT_FILE = config.REPORTS_DIR / "03_enrichment.txt"
 
 
-# A. Selection (Spark)
-
 def select_top_films(spark):
     """Top TOP_N_FILMS feature-length films per (genre, year), 1980-2025.
 
@@ -65,22 +63,65 @@ def select_top_films(spark):
     #  3. explode genres -> one row per (film, genre)
     #  4. Window.partitionBy("startYear", "genre").orderBy(F.desc("numVotes"))
     #     + F.row_number() -> keep rank <= TOP_N_FILMS
-    ...
+    by_year = Window.partitionBy("startYear").orderBy(F.desc("total_votes"))
+    top = (
+        config.CLEAN_DIR.join("title.basics.parquet").join("title.ratings.parquet")
+        .filter(F.col("startYear").between(FIRST_YEAR, LAST_YEAR))
+        .groupBy("startYear", "genre")
+        .agg(F.sum("numVotes").alias("total_votes"),
+                F.count("*").alias("movie_count"))
+        .withColumn("rank", F.row_number().over(by_year))
+        .filter(F.col("rank") <= TOP_N_FILMS)
+        .orderBy("startYear", "rank")
+    )
+    
+    return top
+
+
+def select_top_films(spark):
+    """Top TOP_N_FILMS feature-length films per (genre, year), 1980-2025."""
+    basics = helpers.read_clean(spark, "title.basics")
+    ratings = helpers.read_clean(spark, "title.ratings")
+
+    movies = (
+        basics
+        .filter((F.col("titleType") == "movie")
+                & (F.col("runtimeMinutes") >= MIN_FEATURE_RUNTIME)
+                & F.col("startYear").between(FIRST_YEAR, LAST_YEAR))
+        .join(ratings, "tconst")                      # inner: no votes -> cannot be "top"
+        .withColumn("genre", F.explode("genres"))     # one row per (film, genre)
+    )
+
+    by_genre_year = (Window.partitionBy("startYear", "genre").orderBy(F.desc("numVotes"), "tconst"))
+    return (
+        movies
+        .withColumn("rank", F.row_number().over(by_genre_year))
+        .filter(F.col("rank") <= TOP_N_FILMS)
+        .select("tconst", "primaryTitle", "startYear", "genre", "numVotes", "rank")
+    )
 
 
 def select_principals(spark, films):
-    """The first N_PRINCIPALS principals of each selected film.
+    """The first N_PRINCIPALS distinct people credited on each selected film."""
+    principals = helpers.read_clean(spark, "title.principals")
+    film_ids = films.select("tconst").distinct()
 
-    Returns a DataFrame [tconst, nconst, category, ordering].
-    """
-    # TODO:
-    #  1. title.principals joined with the distinct tconst of `films`
-    #  2. keep the N_PRINCIPALS lowest "ordering" values per tconst
-    #     (ordering = order of the credit on IMDb, 1 = most important)
-    ...
+    # A person credited several times on a film keeps only their best position
+    people = (
+        principals.join(film_ids, "tconst")
+        .groupBy("tconst", "nconst")
+        .agg(F.min("ordering").alias("ordering"),
+             F.min_by("category", "ordering").alias("category"))
+    )
 
+    by_film = Window.partitionBy("tconst").orderBy("ordering")
+    return (
+        people
+        .withColumn("rank", F.row_number().over(by_film))
+        .filter(F.col("rank") <= N_PRINCIPALS)
+        .select("tconst", "nconst", "category", "ordering")
+    )
 
-# B. Gathering (outside Spark: plain Python + HTTP)
 
 def http_get(url, params):
     """GET request that respects the Wikimedia rate limits. Returns the JSON body.
