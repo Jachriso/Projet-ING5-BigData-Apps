@@ -25,6 +25,9 @@ HIT_RATING, FLOP_AVG = 8.0, 6.0
 MIN_OTHER_MOVIES = 2
 MIN_VOTES = 100  # ignore movies rated by too few people
 
+MIN_EPISODES, MIN_SEASONS = 10, 3
+EARLY_SEASONS = 2
+
 
 def write(report, text=""):
     """Print a line to the terminal and write it to the report."""
@@ -168,6 +171,52 @@ def q4_one_hit_directors(spark, movies, report):
     write(report)
 
 
+def q5_series_decline(spark, report):
+    """Return TV series (>= 3 seasons of >= 10 episodes) whose worst-rated
+    episode is in the last season and best-rated episode in seasons 1-2."""
+    episodes = (read_clean(spark, "title.episode")
+                .filter(F.col("seasonNumber").isNotNull()))
+    ratings = read_clean(spark, "title.ratings")
+    titles = read_clean(spark, "title.basics").select("tconst", "primaryTitle")
+
+    seasons = (episodes.groupBy("parentTconst", "seasonNumber")
+               .agg(F.count("*").alias("episode_count"))
+               .filter(F.col("episode_count") >= MIN_EPISODES))
+    series = (seasons.groupBy("parentTconst")
+              .agg(F.count("*").alias("season_count"),
+                   F.max("seasonNumber").alias("last_season"))
+              .filter(F.col("season_count") >= MIN_SEASONS))
+    rated = (
+        episodes
+        .join(seasons.select("parentTconst", "seasonNumber"), ["parentTconst", "seasonNumber"])
+        .join(series, "parentTconst")
+        .join(ratings, "tconst")
+    )
+    worst = Window.partitionBy("parentTconst").orderBy("averageRating", F.desc("numVotes"))
+    best = Window.partitionBy("parentTconst").orderBy(F.desc("averageRating"), F.desc("numVotes"))
+    per_series = (
+        rated
+        .withColumn("worst_rank", F.row_number().over(worst))
+        .withColumn("best_rank", F.row_number().over(best))
+        .groupBy("parentTconst", "season_count", "last_season")
+        .agg(F.max(F.when(F.col("worst_rank") == 1, F.col("seasonNumber"))).alias("worst_season"),
+             F.max(F.when(F.col("best_rank") == 1, F.col("seasonNumber"))).alias("best_season"))
+    )
+    result = (
+        per_series
+        .filter((F.col("worst_season") == F.col("last_season")) & (F.col("best_season") <= EARLY_SEASONS))
+        .join(titles, F.col("parentTconst") == F.col("tconst"))
+        .select("primaryTitle", "season_count", "best_season", "worst_season")
+        .orderBy(F.desc("season_count"))
+    )
+    total, found = per_series.count(), result.count()
+    write(report, f"\nQ5. Series whose worst episode is in the last season "
+                  f"and best episode in seasons 1-{EARLY_SEASONS}")
+    write(report, f"  Series analysed: {total:,}  |  matching: {found:,} ({100 * found / total:.1f}%)")
+    write(report, result.limit(20).toPandas().to_string(index=False))
+    write(report)
+
+
 def main():
     spark = (
         SparkSession.builder.appName("03_explore")
@@ -191,6 +240,7 @@ def main():
         top_genres = q2_top_genres_per_year(movie_genres, report)
         q3_top_vs_rest(movie_genres, top_genres, report)
         q4_one_hit_directors(spark, movies, report)
+        q5_series_decline(spark, report)
 
     spark.stop()
 
