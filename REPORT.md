@@ -16,6 +16,18 @@ Feature-length movies: 490,270
 (movie, genre) rows:   762,427
 ```
 
+All questions start from the cleaned Parquet files produced in the Preparation step. We build two base DataFrames that are reused by almost every question :
+- movies : titles with titleType = movie and runtimeMinutes >= 40 (the AMPAS / BFI definition of a feature film), left-joined with title.ratings so that unrated movies are kept.
+- movie_genres : the same movies with the genres array exploded, so we get one row per (movie, genre). A movie with three genres counts once in each of them.
+
+Both DataFrames are cached because they are read by several questions, which avoids re-reading and re-joining the Parquet files each time. Each question is written as its own function, which keeps the script readable and makes it easy to run or debug one question at a time.
+
+We used the DataFrame API (pyspark.sql.functions and Window) everywhere rather than RDDs. 
+Spark cannot optimize RDD code, because it doesn’t know what our functions do. DataFrame code is automatically optimized by Spark (Catalyst optimizer).
+
+All thresholds (minimum votes, rating cut-offs, etc.) are defined as constants, so they can be changed without touching the query logic.
+
+
 ### Q1. Unusual runtimes by genre
 
 > Find all feature-length movies by genre whose length is notably different than the average length of movies in that genre.
@@ -72,12 +84,25 @@ The Longest Most Meaningless Movie in the World       1970       Drama          
                                  24 Hour Psycho       1993      Horror            1440  60.6
 ```
 
+13 701 (movie, genre) pairs have a runtime more than 2 standard deviations away from their genre average. The genres with the most outliers seems to be the most well-known genres (Thriller, Romance, Drama, Comedy). The most extreme cases are experimental or art films that are days long (Logistics runs 857 hours, Ambiancé 720 hours). These are real films, not data errors, so we kept them. 
+
+Note that one movie can appear several times (e.g. London EC1 in comedy, drama and mystery) because it is compared to each of its genres.
+
+
 **Methodology**
 
+For each genre we compute the average and the standard deviation of runtimeMinutes with a groupBy("genre"). We join these statistics back to movie_genres and compute a z-score for each movie : `z = (runtime - genre_avg) / genre_std`
+
+A movie is notably different if its runtime is far from the usual runtime of its genre. To measure "far", we use the z-score : it tells how many "typical gaps" a movie is from the genre average. We flag movies more than 2 typical gaps away, which is a common rule (only about 5% of movies normally go that far for a normal distribution).
+
+We chose this method because each genre is compared to itself. For example, 150 minutes is normal for a drama but very long for an animation movie. 
 
 
 **Alternatives considered and trade-offs**
 
+- IQR method or median : these are more robust because the mean and standard deviation are themselves pulled up by the extreme films (a single 51 420 minutes movie inflates the Documentary std a lot). 
+With a robust method, more "moderately long" films would be flagged. We kept the z-score because it is simple and easy to explain, but this is the main weakness of our approach.
+- Fixed thresholds (e.g. < 60 min or > 180 min) : simpler, but ignores the differences between genres.
 
 
 ### Q2. Top three genres per year
@@ -228,12 +253,26 @@ The Longest Most Meaningless Movie in the World       1970       Drama          
       2025    Comedy      5919816         2571     3
 ```
 
+Drama is first almost every year. The second and third places are mostly shared between Comedy, Action, Adventure and Crime. 
+ 
 **Methodology**
+ 
+We defined "popularity" as the total number of IMDb votes received by the movies of a genre in a given year. 
+The number of votes measures how many people watched and cared enough to rate a film, which is closer to "popular" than the rating itself (a 9/10 film with 50 votes is not popular).
+ 
+Steps :
+ 
+1. Filter `movie_genres` on `startYear` between 1980 and 2025.
+2. `groupBy("startYear", "genre")` and compute `sum(numVotes)` and `count(*)`.
+3. Rank genres inside each year with `row_number()` over a window partitioned by `startYear` and ordered by `total_votes` descending.
+4. Keep `rank <= 3`.
 
-
-
+A window function is the natural tool for "top N per group" in Spark, because it ranks rows inside each partition without collecting anything on the driver. The movie count is kept as an extra column to help interpret the results.
+ 
 **Alternatives considered and trade-offs**
-
+ 
+- **Number of movies per genre** : would mostly reflect production volume, and the most common genres would always win since they would be more movies produced. It measures what is produced, not what people watch.
+- **Average rating** : measures quality, not popularity, and is very sensitive to small genres with a few highly-rated films.
 
 
 ### Q3. Top three genres compared with the rest
@@ -297,12 +336,31 @@ Overall 1980-2025:
    True            215495   1361120129        6.04
 ```
 
+**Votes are very concentrated** : only 3 genres collect between 38% and 58% of all votes each year (around 44% on average). The peak is 1994 (58.3%), the year of *The Shawshank Redemption*, *Pulp Fiction* and *Forrest Gump*, which all belong to Drama and/or Crime.
+
+**Popular does not mean better rated** : in most years until 2001 the top 3 genres have a slightly higher average rating than the other genres, but from 2002 onwards it is the opposite, the "rest" is rated higher every single year. Over the whole period the top genres average 6.04 against 6.14 for the rest.
+
+The differences in rating are small (up to 0.3 points), so the main difference between the top 3 and the rest is probably in audience size, not in quality.
+
+
 **Methodology**
+ 
+We reused the top 3 DataFrame from Q2 as a lookup table : each (year, genre) in the top 3 gets a flag `is_top = True`. This table is left-joined to `movie_genres` (1980-2025) and missing flags are set to `False` with `coalesce`.
+ 
+Then, for each year, we compute with conditional aggregations (`F.when(is_top, ...)` inside `sum` / `avg`) :
+ 
+- the share of votes that goes to the top 3 genres,
+- the average rating of movies in the top 3 genres,
+- the average rating of movies in the other genres.
 
-
-
+We also computed one global comparison over the whole period by grouping on `is_top` only. Conditional aggregation lets us get all metrics in a single `groupBy` pass instead of computing the top and the rest separately and joining them afterwards.
+ 
+We compared both popularity (vote share) and quality (average rating) because the question is open, and these two dimensions give a different picture.
+ 
 **Alternatives considered and trade-offs**
-
+ 
+- **Comparing against each other genre individually** (e.g. rank 1 vs rank 10) : more detailed, but much harder to read over 46 years. Grouping into "top 3" vs "rest" gives a single, clear comparison per year.
+- **Filtering out movies with few votes** : in this question we kept all rated movies, so many small films with few votes are included in the averages. A minimum vote threshold (like in Q4) would reduce noise, at the cost of ignoring a large part of the catalogue.
 
 
 ### Q4. One-hit directors
