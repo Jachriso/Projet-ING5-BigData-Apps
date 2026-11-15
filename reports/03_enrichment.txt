@@ -1,0 +1,19 @@
+IMDb - Data enrichment
+
+Selected (film, genre) rows: 10,198
+Selected (film, principal) rows: 21,490
+
+Films (synopsis)
+  records: 7,185
+  with synopsis: 5,925 (82.5 %)
+  note 'No Wikidata item for this IMDb id': 489
+  note 'No Plot section in the Wikipedia article': 443
+  note 'No English Wikipedia article': 328
+
+Principals (biography)
+  records: 11,277
+  with biography: 8,029 (71.2 %)
+  note 'No Wikidata item for this IMDb id': 2,086
+  note 'No English Wikipedia article (Wikidata facts only)': 1,161
+  note 'Empty Wikipedia introduction': 1
+
