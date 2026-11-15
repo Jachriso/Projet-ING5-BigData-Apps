@@ -21,6 +21,10 @@ Z_THRESHOLD = 2  # "notably different" = more than 2 standard deviations
 FIRST_YEAR, LAST_YEAR = 1980, 2025
 TOP_N = 3
 
+HIT_RATING, FLOP_AVG = 8.0, 6.0
+MIN_OTHER_MOVIES = 2
+MIN_VOTES = 100  # ignore movies rated by too few people
+
 
 def write(report, text=""):
     """Print a line to the terminal and write it to the report."""
@@ -133,6 +137,37 @@ def q3_top_vs_rest(movie_genres, top_genres, report):
     write(report)
 
 
+def q4_one_hit_directors(spark, movies, report):
+    """Return directors with exactly one movie rated >= 8 (HIT_RATING) whose
+    other movies (at least 2, MIN_OTHER_MOVIES) average <= 6 (FLOP_AVG)."""
+    crew = read_clean(spark, "title.crew")
+    names = read_clean(spark, "name.basics").select("nconst", "primaryName")
+    rated = movies.filter(F.col("numVotes") >= MIN_VOTES)
+    directed = (
+        crew.select("tconst", F.explode("directors").alias("nconst"))
+        .join(rated, "tconst")
+    )
+    is_hit = F.col("averageRating") >= HIT_RATING
+    per_director = directed.groupBy("nconst").agg(
+        F.sum(F.when(is_hit, 1).otherwise(0)).alias("hit_count"),
+        F.first(F.when(is_hit, F.col("primaryTitle")), ignorenulls=True).alias("hit_title"),
+        F.max(F.when(is_hit, F.col("averageRating"))).alias("hit_rating"),
+        F.sum(F.when(~is_hit, 1).otherwise(0)).alias("other_count"),
+        F.round(F.avg(F.when(~is_hit, F.col("averageRating"))), 2).alias("other_avg"),
+    )
+    result = (
+        per_director
+        .filter((F.col("hit_count") == 1) & (F.col("other_count") >= MIN_OTHER_MOVIES) & (F.col("other_avg") <= FLOP_AVG))
+        .join(names, "nconst", "left")
+        .select("primaryName", "hit_title", "hit_rating", "other_count", "other_avg")
+        .orderBy(F.desc("hit_rating"))
+    )
+    write(report, f"\nQ4. Directors with one movie >= {HIT_RATING} and >= {MIN_OTHER_MOVIES} others averaging <= {FLOP_AVG}")
+    write(report, f"  Directors found: {result.count():,}")
+    write(report, result.limit(20).toPandas().to_string(index=False))
+    write(report)
+
+
 def main():
     spark = (
         SparkSession.builder.appName("03_explore")
@@ -155,6 +190,7 @@ def main():
         q1_runtime_outliers(movie_genres, report)
         top_genres = q2_top_genres_per_year(movie_genres, report)
         q3_top_vs_rest(movie_genres, top_genres, report)
+        q4_one_hit_directors(spark, movies, report)
 
     spark.stop()
 
