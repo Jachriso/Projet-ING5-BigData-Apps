@@ -100,6 +100,39 @@ def q2_top_genres_per_year(movie_genres, report):
     return top
 
 
+def q3_top_vs_rest(movie_genres, top_genres, report):
+    """Compare, for each year, the top 3 (TOP_N) genres with all the other genres:
+    share of total votes and average rating."""
+    flags = top_genres.select("startYear", "genre", F.lit(True).alias("is_top"))
+    rows = (
+        movie_genres
+        .filter(F.col("startYear").between(FIRST_YEAR, LAST_YEAR))
+        .join(flags, ["startYear", "genre"], "left")
+        .withColumn("is_top", F.coalesce("is_top", F.lit(False)))
+    )
+    is_top = F.col("is_top")
+    per_year = (
+        rows.groupBy("startYear")
+        .agg(
+            F.round(100 * F.sum(F.when(is_top, F.col("numVotes"))) / F.sum("numVotes"), 1).alias("top_vote_share_pct"),
+            F.round(F.avg(F.when(is_top, F.col("averageRating"))), 2).alias("top_avg_rating"),
+            F.round(F.avg(F.when(~is_top, F.col("averageRating"))), 2).alias("rest_avg_rating"),
+        )
+        .orderBy("startYear")
+    )
+    write(report, f"\nQ3. Top {TOP_N} genres vs the other genres, per year")
+    write(report, per_year.toPandas().to_string(index=False))
+    overall = rows.groupBy("is_top").agg(
+        F.count("*").alias("movie_genre_rows"),
+        F.sum("numVotes").alias("total_votes"),
+        F.round(F.avg("averageRating"), 2).alias("avg_rating"),
+    )
+    write(report)
+    write(report, f"  Overall {FIRST_YEAR}-{LAST_YEAR}:")
+    write(report, overall.toPandas().to_string(index=False))
+    write(report)
+
+
 def main():
     spark = (
         SparkSession.builder.appName("03_explore")
@@ -121,6 +154,7 @@ def main():
         # Questions, one function per question
         q1_runtime_outliers(movie_genres, report)
         top_genres = q2_top_genres_per_year(movie_genres, report)
+        q3_top_vs_rest(movie_genres, top_genres, report)
 
     spark.stop()
 
