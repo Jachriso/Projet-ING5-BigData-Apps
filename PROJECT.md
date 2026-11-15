@@ -89,7 +89,7 @@ Run each step from the project root, in this order:
 | Step | Command | Output |
 |------|---------|--------|
 | Data preparation | `python src/01_clean.py` | `data/clean/*.parquet`, `reports/01_data_preparation.txt` |
-| Data exploration | `python notebooks/03_explore.py` | `reports/03_exploration.txt` |
+| Data exploration | `python src/02_explore.py` | `reports/02_exploration.txt` |
 | Data enrichment | `...` | `...` |
 | Transformation | `...` | `...` |
 | Streaming | `...` (Kafka must be running) | `...` |

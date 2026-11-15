@@ -9,7 +9,7 @@ All final query outputs, tables, streaming metrics, etc.
 
 ## Exploration
 
-All results below are produced by `notebooks/03_explore.py` (full output in `reports/03_exploration.txt`).
+All results below are produced by `src/02_explore.py` (full output in `reports/02_exploration.txt`).
 
 ```text
 Feature-length movies: 490,270

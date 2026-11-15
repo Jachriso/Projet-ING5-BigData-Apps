@@ -1,8 +1,9 @@
-# 03_explore.py
-# Step 3 - Exploration: joins, aggregates and indicators on the cleaned
-# IMDb data. Results are written to reports/03_exploration.txt.
+# 02_explore.py
+# Step 2 - Exploration : joins, aggregates and indicators on the cleaned
+# IMDb data. Results are written to reports/02_exploration.txt.
 #
-# Run from the project root: python notebooks/03_explore.py
+# Run from the project root: python src/02_explore.py
+
 import sys
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from pyspark.sql import Window
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 import config
 
-REPORT_FILE = config.REPORTS_DIR / "03_exploration.txt"
+REPORT_FILE = config.REPORTS_DIR / "02_exploration.txt"
 MIN_FEATURE_RUNTIME = 40  # feature-length film (AMPAS / BFI definition)
 
 Z_THRESHOLD = 2  # "notably different" = more than 2 standard deviations
@@ -396,7 +397,7 @@ def q8_multi_talented(spark, movies, report):
 
 def main():
     spark = (
-        SparkSession.builder.appName("03_explore")
+        SparkSession.builder.appName("02_explore")
         .config("spark.driver.memory", config.SPARK_DRIVER_MEMORY)
         .config("spark.sql.shuffle.partitions", config.SPARK_SHUFFLE_PARTITIONS)
         .getOrCreate()
