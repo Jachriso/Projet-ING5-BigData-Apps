@@ -69,5 +69,30 @@ foreach ($f in $files) {
 Get-ChildItem data/raw | Select-Object Name, @{Name = "MB"; Expression = { [math]::Round($_.Length / 1MB, 1) }}
 ```
 
+### 3. Set up the Python environment
+
+Requirements: Python 3.14 and Java 21 (needed by Spark).
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # PowerShell: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Paths and Spark settings (driver memory, shuffle partitions) are defined in `config.py`.
+
+
+### 4. Run the pipeline
+
+Run each step from the project root, in this order:
+
+| Step | Command | Output |
+|------|---------|--------|
+| Data preparation | `python src/01_clean.py` | `data/clean/*.parquet`, `reports/01_data_preparation.txt` |
+| Data exploration | `python notebooks/03_explore.py` | `reports/03_exploration.txt` |
+| Data enrichment | `...` | `...` |
+| Transformation | `...` | `...` |
+| Streaming | `...` (Kafka must be running) | `...` |
+
 
 ## AI & LLM tools usage
