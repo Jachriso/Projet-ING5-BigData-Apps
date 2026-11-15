@@ -2,7 +2,7 @@
 # Step 3 - Exploration: joins, aggregates and indicators on the cleaned
 # IMDb data. Results are written to reports/03_exploration.txt.
 #
-# Run from the project root: python src/03_transform.py
+# Run from the project root: python notebooks/03_explore.py
 import sys
 from pathlib import Path
 
@@ -14,6 +14,8 @@ import config
 
 REPORT_FILE = config.REPORTS_DIR / "03_exploration.txt"
 MIN_FEATURE_RUNTIME = 40  # feature-length film (AMPAS / BFI definition)
+
+Z_THRESHOLD = 2  # "notably different" = more than 2 standard deviations
 
 
 def write(report, text=""):
@@ -34,11 +36,9 @@ def build_movies(spark):
     ratings = read_clean(spark, "title.ratings")
     return (
         basics
-        .filter((F.col("titleType") == "movie")
-                & (F.col("runtimeMinutes") >= MIN_FEATURE_RUNTIME))
+        .filter((F.col("titleType") == "movie") & (F.col("runtimeMinutes") >= MIN_FEATURE_RUNTIME))
         .join(ratings, "tconst", "left")
-        .select("tconst", "primaryTitle", "startYear", "runtimeMinutes",
-                "genres", "averageRating", "numVotes")
+        .select("tconst", "primaryTitle", "startYear", "runtimeMinutes", "genres", "averageRating", "numVotes")
     )
 
 
@@ -49,9 +49,36 @@ def explode_genres(movies):
             .drop("genres"))
 
 
+def q1_runtime_outliers(movie_genres, report):
+    """Return movies whose runtime is unusually long or short for their genre, 
+    i.e. more than Z_THRESHOLD standard deviations away from the genre average."""
+    stats = movie_genres.groupBy("genre").agg(
+        F.avg("runtimeMinutes").alias("avg_runtime"),
+        F.stddev("runtimeMinutes").alias("std_runtime"),
+    )
+    outliers = (
+        movie_genres.join(stats, "genre")
+        .withColumn("z_score", (F.col("runtimeMinutes") - F.col("avg_runtime")) / F.col("std_runtime"))
+        .filter(F.abs(F.col("z_score")) > Z_THRESHOLD)
+    )
+    write(report, "\nQ1. Feature-length movies with an unusual runtime for their genre")
+    write(report, f"  Outliers (|z| > {Z_THRESHOLD}): {outliers.count():,}")
+    summary = (outliers.groupBy("genre")
+               .agg(F.count("*").alias("outlier_count"), F.round(F.first("avg_runtime"), 1).alias("avg_runtime"))
+               .orderBy(F.desc("outlier_count")))
+    write(report, summary.toPandas().to_string(index=False))
+    write(report)
+    write(report, "  Most extreme examples:")
+    top = (outliers.orderBy(F.desc(F.abs("z_score")))
+           .select("primaryTitle", "startYear", "genre", "runtimeMinutes", F.round("z_score", 1).alias("z"))
+           .limit(15))
+    write(report, top.toPandas().to_string(index=False))
+    write(report)
+
+
 def main():
     spark = (
-        SparkSession.builder.appName("03_transform")
+        SparkSession.builder.appName("03_explore")
         .config("spark.driver.memory", config.SPARK_DRIVER_MEMORY)
         .config("spark.sql.shuffle.partitions", config.SPARK_SHUFFLE_PARTITIONS)
         .getOrCreate()
@@ -66,7 +93,9 @@ def main():
         write(report)
         write(report, f"Feature-length movies: {movies.count():,}")
         write(report, f"(movie, genre) rows:   {movie_genres.count():,}")
-        # Questions will be added here, one function per question
+        
+        # Questions, one function per question
+        q1_runtime_outliers(movie_genres, report)
 
     spark.stop()
 
