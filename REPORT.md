@@ -6,6 +6,122 @@ All final query outputs, tables, streaming metrics, etc.
 - Alternatives considered and trade-offs made
 
 ## Preparation
+Full output: [reports/01_data_preparation.txt](reports/01_data_preparation.txt)
+
+Our cleaning script is divided in 5 different steps : 
+1. Read the data sets in the `data/raw` folder
+2. Report the null and missing values of each columns of each dataset
+3. Common cleaning of the tables
+4. Specific cleaning for  each tables
+5. Save the tables in the `data/clean` folder 
+
+Those steps enable us to answer the next 4 questions : 
+1. For each column of each table in the IMDB dataset, calculate the percentage of nulls, missing, or empty records
+2. Which five columns across the entire dataset have the highest percentage of null values?
+3. Identify other data quality issues for the dataset such as principals who died before they were born, foreign keys with missing parent records, etc.
+4. Design and implement a way to handle these values.
+
+### Null, missing and empty values per column
+
+| Table | Column | Missing values | Missing |
+|------|------|---------:|---------:|
+| name.basics | primaryName | 89 | 0.00 % |
+| name.basics | birthYear | 15,126,718 | 95.66 % |
+| name.basics | deathYear | 15,547,099 | 98.32 % |
+| name.basics | primaryProfession | 3,219,851 | 20.36 % |
+| name.basics | knownForTitles | 1,917,161 | 12.12 % |
+| title.basics | startYear | 1,487,875 | 11.48 % |
+| title.basics | endYear | 12,794,047 | 98.73 % |
+| title.basics | runtimeMinutes | 8,056,989 | 62.18 % |
+| title.basics | genres | 547,930 | 4.23 % |
+| title.akas | region | 12,998,541 | 21.53 % |
+| title.akas | language | 19,655,399 | 32.55 % |
+| title.akas | types | 40,375,080 | 66.86 % |
+| title.akas | attributes | 60,068,229 | 99.47 % |
+| title.crew | directors | 5,789,625 | 44.68 % |
+| title.crew | writers | 6,430,569 | 49.62 % |
+| title.episode | seasonNumber | 2,123,916 | 21.17 % |
+| title.episode | episodeNumber | 2,123,916 | 21.17 % |
+| title.principals | job | 82,869,755 | 80.66 % |
+| title.principals | characters | 52,680,715 | 51.28 % |
+
+Here is a table with all columns which have null, missing or empty values. All other columns are complete.
+
+### Top 5 columns with the most null values
+
+| Rank | Column | Missing |
+|------|------|---------|
+| 1 | title.akas.attributes | 99.47 % |
+| 2 | title.basics.endYear | 98.73 % |
+| 3 | name.basics.deathYear | 98.32 % |
+| 4 | name.basics.birthYear | 95.66 % |
+| 5 | title.principals.job | 80.66 % |
+
+Here is a list of the top 5 columns with the highest null, missing or empty values. 
+We can divide the missing values in two categories : 
+- Not applicable
+- Information unknown.
+
+For each of those column, we can identify the category of null values that we have : 
+- for the column title.basics.endYear and name.basics.deathYear, we can explain that high percentage with the fact that people are not dead yet and that a movie has no end year and a series could still be on going. Which implies that we cannot apply a value in most cases.
+- for the title.akas.attributes and title.principals.job columns, we can explain that high percentage because of the optional attribute of those columns. They are not mandatory information. For example, the job column is used to add information to the field category.
+- for the name.basics.birthYear column, we could categorize it as unknown information because this dataset list all movie and series workers whether they are famous or not.
+
+### Other data quality issues
+
+**Primary keys and data types:** We didn't encounter any missing or duplicated primary key in any of the 7 tables, and no invalid number in the 13 numeric columns.
+
+**Inconsistent values inside a table**
+
+| Table | Issue | Rows | Share |
+|------|------|---------:|---------:|
+| name.basics | deathYear < birthYear | 28 | 0.0002 % |
+| title.basics | runtimeMinutes <= 0 | 4 | 0.0000 % |
+| title.basics | runtimeMinutes over 24 hours | 210 | 0.0016 % |
+| title.basics | startYear > 2026 (announced titles) | 6,156 | 0.0475 % |
+
+Here is a summary of the inconsistent issues encountered in the different tables. We didn't found any issues like a birthYear or deathYear in the future, an endYear inferior to a startYear, an endYear on a non-series title, a boolean value different than a 0 or a 1, episode being its own parent, negative season or episode number, averageRating outside 1-10, negative numVotes.
+
+**Relations between tables**
+
+| Check | Issues | Share |
+|------|---------:|---------:|
+| title.principals.nconst without parent in name.basics | 7,183 | 0.0070 % |
+| title.crew.directors without parent in name.basics | 423 | 0.0044 % |
+| title.crew.writers without parent in name.basics | 1,148 | 0.0075 % |
+| title.episode.parentTconst without parent in title.basics | 5 | 0.0000 % |
+| Principals (distinct people) who died before they were born | 20 | 0.0003 % |
+| Principal credits on a title released before the person was born | 3,109 | 0.0081 % |
+
+We didn't encounter any missing parent record for title.principals.tconst, title.ratings.tconst, title.crew.tconst, title.episode.tconst, title.akas.titleId and name.basics.knownForTitles. An all the relashionship issues affect only a small portion of the dataset. 
+
+### Handling strategy
+
+In our strategy, we decided to apply dropping rows only if they had a missing or a duplicated primary key value. After our analysis, we found out that none of our dataset rows had a missing or duplicated primary key value so no line was dropped. 
+We decided to not drop rows for other missing values and decided to handle them differently : 
+
+| Issue | Handling |
+|------|------|
+| deathYear < birthYear | both years set to null |
+| runtimeMinutes <= 0 | set to null |
+| runtimeMinutes > 1440 | kept |
+| startYear > 2026 | kept (treated it as an announcment) |
+| Missing parent records | kept, only counted (inner joins drop them later) |
+| `\N` and empty strings | stored as null; other null values are kept |
+| Numeric columns | cast with `try_cast` (invalid numbers become null) |
+| List columns | split into arrays; `characters` parsed as JSON |
+
+### Methodological explanation
+
+#### Methodology and why it was chosen
+
+To start cleaning our data, we started with calculating the number and percentage of missing / null values. Found each value, we analysed the results as stated in the answer to the question 2. We concluded that there were two types of missing and null values : the not applicable type and the unknown type. We then decided to treat those missing values without dropping any rows except for missing and duplicated primary key values. Our goal was to prevent the creation of more foreign keys with missing parent records. Concerning the foreign keys which already have missing parent records, we decided to keep them because they still had valid data. Also most of the time, it was missing additional data like the names of the actors, writers or directors, information which is not fundamentally necessary for every line. We also decided to treat incoherent data like explained in our handling strategy. 
+
+#### Alternatives considered and trade-offs
+
+At the beginning, when we had our first report on the missing values, we had the idea to drop the rows with a missing percentage when the column had a total percentage of missing and null values below 10%, replace the missing numerical values with 0 and change the endYear for non series to have endYear = startYear. 
+But we cancelled all of those options because they would have resolved any issues of the dataset and only created new ones like new foreign keys missing parent records. 
+So we changed strategies and instead of blindly changing the data, we tried to better understand the current data. for instance, replacing values by 0 could have been a huge mistake with for example the number of seasons because in this case, 0 means special seasons and episodes. Same for endYear and startYear : for a movie or a documentary for example, an endYear doesn't mean anything because it only has one year of release. 
 
 ## Exploration
 
