@@ -9,7 +9,7 @@ All final query outputs, tables, streaming metrics, etc.
 Full output: [reports/01_data_preparation.txt](reports/01_data_preparation.txt)
 
 Our cleaning script is divided in 5 different steps : 
-1. Read the data sets in the `data/raw` folder
+1. Read the datasets in the `data/raw` folder
 2. Report the null and missing values of each columns of each dataset
 3. Common cleaning of the tables
 4. Specific cleaning for  each tables
@@ -636,6 +636,119 @@ Sylvester Stallone actor+director+writer            25       6.32        5.61  0
 
 
 ## Enrichment
+Full output: [reports/03_enrichment.txt](reports/03_enrichment.txt)
+
+### Scope
+
+| Selection | Rows |
+|------|------|
+| Top 10 feature-length films per (genre, year), 1980-2025 | 10,198 (film, genre) |
+| First 3 principals of each film | 21,490 (film, principal) |
+
+To create our scope, we filtered the inner join of `title.basics` and `title.ratings` with the variables: `titleType = "movie"`, `FIRST_YEAR`, `LAST_YEAR`, `MIN_FEATURE_RUNTIME` (defined below). We set the minimum feature runtime to 40 minutes as it is the minimum runtime in the official definition of a feature-length film. After the filter, we partitioned our dataset and created a rank column to rank the movies by decreasing `numVotes` depending on the year and genre of the movie and we only took the `TOP_N_FILMS`. 
+
+After obtaining our final movie dataframe, we filtered the inner join of its distinct movies with `title.principals` to obtain the first three principals for each movie. The join is done on distinct movies because a movie listed under two genres would otherwise have its principals duplicated. Another issue was that the same person could be credited several times on one movie, for example as both director and writer. So for each person we decided to keep their best position (minimum `ordering`), then take the first three distinct people. 
+
+```
+FIRST_YEAR, LAST_YEAR = 1980, 2025
+MIN_FEATURE_RUNTIME = 40      # feature-length film, in minutes
+TOP_N_FILMS = 10              # films per (genre, year), ranked by popularity (numVotes)
+N_PRINCIPALS = 3              # principals enriched per film
+```
+
+### Sources and collection
+
+To enrich our movies, we used two different sources: Wikidata and the English Wikipedia. Both are human-authored resources and have an open licence. We link our IMDb ids (`tconst` for the movies, `nconst` for the people) to Wikidata with the property P345 (IMDb id). We did not search by title because many movies share the same name or have remakes, so we could have matched the wrong page. Wikidata gives us the link to the English Wikipedia article. For the people, it also gives us the birth date, the death date, the birth place and the occupations.
+
+Then we get the texts from Wikipedia:
+- For a movie, the synopsis is the `Plot` section of the article. If there is no `Plot` section, we try in this order: `Plot summary`, `Synopsis`, `Premise` and `Story`. If none is found, we put the text to null and add a note to explain the reason it is empty.
+- For a person, the biography is the introduction of the article. And if the information is missing or empty, we put the text to null and add a note to explain the reason it is empty.
+
+We decided to do this part in Python and not in Spark, because it is only a series of HTTP requests with a rate limit, and Spark cannot make it faster. To reduce the number of requests, we grouped them by ids and page batches: 50 ids for each Wikidata query and 20 pages for each request of introductions.
+
+We also had to respect the rules of Wikimedia and to be sure that a failure would not make us restart everything:
+- Each request has a `User-Agent` with a contact address, as asked by Wikimedia.
+- We wait 0.3 s between two requests.
+- After a timeout, a connection error or an error 429/500/502/503/504, we retry up to 4 times and wait longer each time (2, 4, 8... seconds). For the other errors (404, 400), retrying would not help, so we stop.
+- Each batch is written in a raw JSONL file (`films.jsonl`, `people.jsonl`) to keep the already filled ids. When we run the script again, those ids will be skipped but a movie or a person with a failed request is not written, so it will be tried again next time.
+
+### Results
+
+| Films | Count | Share |
+|------|------|---------|
+| Records | 7,185 | 100 % |
+| With synopsis | 5,925 | 82.5 % |
+| No Wikidata item for this IMDb id | 489 | 6.8 % |
+| No Plot section in the Wikipedia article | 443 | 6.2 % |
+| No English Wikipedia article | 328 | 4.6 % |
+
+| Distinct Principals | Count | Share |
+|------|------|---------|
+| Records | 11,277 | 100 % |
+| With biography | 8,029 | 71.2 % |
+| No Wikidata item for this IMDb id | 2,086 | 18.5 % |
+| No English Wikipedia article (Wikidata facts only) | 1,161 | 10.3 % |
+| Empty Wikipedia introduction | 1 | 0.0 % |
+
+Here is the coverage of our enrichment. In each table, the lines with a missing value and the line with a text add up to the total number of records, so every record is either enriched or explained.
+The coverage is lower for the people than for the movies. We could explain that by the fact that a lot of crew members may not have a Wikidata item or an English article.
+
+### Provenance and missing information
+
+For each record, we keep where the information comes from:
+- `source_url`: the permanent link to the exact Wikipedia revision of the text (`?oldid=...`). If the article is modified later, our source stays the same.
+- `wikidata_url`: the Wikidata page, which is the source of the facts about the people (dates, place, occupations).
+- `wikidata_id` and `wikipedia_title`: to find the entity again.
+- `retrieved_at`: the date and time (UTC) of the collection.
+
+When we found nothing, the record still has a source. We use the Wikidata page if the item exists, and the Wikidata SPARQL endpoint if nothing was found at all. The cleaning step applies the same rule, so no record has a null `source_url`.
+
+We decided to never invent or replace missing information with a default text. The value stays null and the `note` column explains why:
+
+| Note | Meaning |
+|------|------|
+| No Wikidata item for this IMDb id | The id is not in Wikidata |
+| No English Wikipedia article | The item exists but has no English article |
+| No Plot section in the Wikipedia article | The article has no accepted synopsis section |
+| Empty Wikipedia introduction | The article exists but the introduction is empty |
+| No synopsis / biography available | Fallback added during the cleaning when the text and the note are both null |
+
+These notes are also used to build the coverage tables above.
+
+### Cleaning and schema enforcement (Spark)
+
+The raw JSONL files are read again with Spark. Then we did the following:
+1. **Explicit schemas:** we defined `FILM_SCHEMA` and `PEOPLE_SCHEMA` so that Spark does not guess the types. It is more reliable and it avoids an extra pass on the data.
+2. **Text cleaning:** we trim the texts, we replace the series of blank lines by only one, and the empty strings become null.
+3. **Dates:** `birth_date` and `death_date` are converted with `try_to_date`, and `retrieved_at` with `try_to_timestamp`. An invalid value becomes null instead of stopping the job.
+4. **Duplicates:** we drop the duplicates on `tconst` and `nconst`, in case a record was written twice after an interruption.
+5. **Joins:** we join the enriched movies with our selected movies on `tconst`, and the enriched people with our selected principals on `nconst`. We used left joins, so a selected movie or principal is never lost when the enrichment found nothing.
+6. **Outputs:** the two results are saved in Parquet (`top_films` and `top_films_principals`) and the coverage report is written in `reports/03_enrichment.txt`.
+
+The `top_films` table has one row for each pair (movie, genre), so the synopsis of a movie in several genres appears on each of its rows. But we only collected it once.
+
+### Scalability
+
+The Spark part scales with the data, because the selection (`explode`, window and joins) and the cleaning are distributed operations. We cache the selected datasets because we use them several times. We also use `toLocalIterator()` to send a Spark partition at a time instead of loading all the data in the memory of the driver. The ids are made distinct before, so a movie in several genres or a person in several movies is only requested once.
+
+The slow part is the collection, because it is sequential and limited by the rate limit. The run time of the script depends on the size of our selection, not on the size of the IMDb tables. The resume system also makes the long collection safe: if it stops, we lose one batch at most.
+
+### Methodological explanation
+
+#### Methodology and why it was chosen
+
+Our pipeline has three steps: data selection of movies and principals in Spark, data collection in Python from Wikipedia and Wikidata, and data cleaning in Spark. 
+In the first step, we filtered our different datasets and made some inner joins as explained in the [Scope](#scope) section. Then we defined our sources as Wikipedia and Wikidata and applied their rules to get the data needed (biographies and synopses) as explained in the [Sources and collection](#sources-and-collection) section. We saved the raw enriched data in `data/enriched/raw/films.jsonl` and `data/enriched/raw/people.jsonl`. After saving the raw enriched data, we cleaned it with Spark by enforcing the types and saving it in Parquet. 
+
+To search the movies and people in Wikipedia, we used their ids to prevent wrong matches (like people or movies with the same name). We also decided to keep the raw files separated from the cleaned data so that we never have to redo the slow collection when we change a cleaning rule. 
+
+#### Alternatives considered and trade-offs
+
+At first, we considered the source of our data research (text generation was prohibited). The subject suggested Wikipedia or other APIs. We chose Wikipedia because it is human-written and its content is open for API reading whereas IMDb forbids scraping.
+Instead of searching directly on Wikipedia, we chose to use Wikidata to prevent unnoticeable mistakes like homonyms and remakes. That choice led to some data loss (around 7% of loss for the movies and 18% for the people). We still chose that method because the data loss was low compared to the error risk of not taking the right synopses or biography.
+We chose to store the raw and final results in different formats because of their use. We need to write line by line in the raw file which is why we use a jsonl file.
+
+Our goal was to have reliable data even with lower coverage and that our code scalability. 
 
 ## Streaming
 
