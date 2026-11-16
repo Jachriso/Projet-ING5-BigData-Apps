@@ -177,7 +177,7 @@ With the virtual environment activated, run each step from the project root, in 
 | Data preparation | `python src/01_clean.py` | `data/clean/*.parquet`, `reports/01_data_preparation.txt` | ~25 min |
 | Data exploration | `python src/02_explore.py` | `reports/02_exploration.txt` | |
 | Data enrichment | `python src/03_enrich.py` | `data/enriched/*.parquet`, `reports/03_enrichment.txt` | |
-| Streaming | `python src/04_wiki_producer.py` (terminal 2) + `python src/04_streaming.py` (terminal 3) | Console output, `reports/04_streaming.txt` | Runs until stopped (≥ 15 min) |
+| Streaming | `python src/04_wiki_producer.py` (terminal 2) + `python src/04_streaming.py` (terminal 3), then `python src/04_summary_streaming.py` | Console output, `reports/04_streaming.txt`, `reports/04_summary_streaming.txt` | Runs until stopped (≥ 15 min) |
 
 Each step reads the output of the previous ones: `src/02_explore.py` and `src/03_enrich.py` need `data/clean/` to be filled by `src/01_clean.py` first.
 
@@ -186,15 +186,21 @@ Each step reads the output of the previous ones: `src/02_explore.py` and `src/03
 Open three terminals at the project root, with the virtual environment activated:
 
 ```bash
-docker compose up -d                 # 1. start Kafka (localhost:9092)
-python src/04_wiki_producer.py       # 2. send Wikipedia edits to the topic `wiki-changes`
-python src/04_streaming.py           # 3. Spark job : match edits with IMDb titles and people
+docker compose up -d                                            # 1. start Kafka (localhost:9092)
+python src/04_wiki_producer.py                                  # 2. send Wikipedia edits to the topic `wiki-changes`
+python -u src/04_streaming.py | tee reports/04_streaming.txt    # 3. Spark job : match edits with IMDb titles and people
 ```
 
-The first run downloads the Spark Kafka connector, so it needs internet. To stop, press Ctrl+C in both Python terminals, then run :
+The third command prints the results in the console and saves them in `reports/04_streaming.txt` at the same time. The first run downloads the Spark Kafka connector, so it needs internet. Let the job run for 15 to 30 minutes, then press Ctrl+C in both Python terminals and stop Kafka:
 
 ```bash
 docker compose down
+```
+
+The raw output contains many empty batches. To keep only the matching events and the final count of each window (the tables shown in `REPORT.md`), run:
+
+```bash
+python src/04_summary_streaming.py reports/04_streaming.txt > reports/04_summary_streaming.txt
 ```
 
 ## AI & LLM tools usage
