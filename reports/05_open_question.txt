@@ -1,0 +1,120 @@
+IMDb - Open question: which genres travel best internationally?
+
+Scope
+  Feature-length rated films 1980-2025: 237,143
+  Films with no regional title: 352 (0.1 %)
+  Films with at least one regional title: 236,791
+  Excluded pseudo-regions: XWW
+
+Step 1. Raw international reach and popularity
+  corr(regions, log10(numVotes)) = 0.77
+    votes    films  avg_regions  median_regions  pct_auto_block
+       1+   11,739          3.2             1.0             0.0
+      10+  111,821          4.8             4.0             0.0
+     100+   73,609          8.4             8.0             0.3
+    1000+   28,849         16.2            15.0             9.8
+   10000+    8,547         30.8            32.0            61.1
+  100000+    2,578         47.4            47.0            96.5
+
+Step 2. Genres ranked once popularity and decade are taken into account (genres with >= 500 films)
+  avg_regions = raw mean; export_index = popularity- and decade-adjusted
+  adjusted_rank        genre    films  median_votes  avg_regions  raw_rank  export_index
+              1    Animation    5,595           179         13.6         2          1.19
+              2      Western      787           161         11.2         9          1.16
+              3         News      669            30          6.6        21          1.15
+              4    Adventure   12,577           253         14.5         1          1.12
+              5       Sci-Fi    6,563           241         12.8         3          1.11
+              5     Thriller   24,475           234         11.5         7          1.11
+              7       Action   25,339           237         12.2         6          1.09
+              8       Horror   22,135           194         10.7        10          1.07
+              9      Mystery   10,232           300         12.7         4          1.06
+              9       Family    9,598           124          9.5        14          1.06
+             11        Crime   19,211           296         12.3         5          1.05
+             12      Fantasy    8,086           195         11.5         7          1.02
+             12        Drama  104,644           131          9.5        14          1.02
+             14      Romance   23,732           218         10.5        11          1.01
+             14          War    3,411           124          9.5        14          1.01
+             14        Sport    3,621           133          9.5        14          1.01
+             17    Biography    9,359           112         10.2        12           1.0
+             18      History    7,307           101          9.2        18          0.99
+             18        Music    7,092            78          8.5        19          0.99
+             20  Documentary   51,020            29          5.7        22          0.96
+             21       Comedy   56,585           183          9.6        13          0.94
+             22      Musical    2,740            88          7.5        20          0.93
+             23        Adult    2,236            35          2.4        23          0.57
+
+Step 3. Robustness of the ranking to the machine-translated block of 7 regions (IN, DE, JP, FR, ES, IT, PT)
+  Films with the full block: 10,769
+        genre    films  all_regions  without_block_regions  without_block_films
+    Animation    5,595         1.19                   1.16                 1.15
+      Western      787         1.16                   1.17                 1.17
+         News      669         1.15                   1.18                 1.16
+    Adventure   12,577         1.12                   1.12                 1.11
+     Thriller   24,475         1.11                   1.11                 1.13
+       Sci-Fi    6,563         1.11                    1.1                 1.13
+       Action   25,339         1.09                   1.09                  1.1
+       Horror   22,135         1.07                   1.08                 1.09
+       Family    9,598         1.06                   1.07                 1.05
+      Mystery   10,232         1.06                   1.06                 1.07
+        Crime   19,211         1.05                   1.05                 1.06
+      Fantasy    8,086         1.02                   1.02                 1.02
+        Drama  104,644         1.02                   1.02                 1.02
+      Romance   23,732         1.01                   1.02                 1.01
+          War    3,411         1.01                   1.02                 1.01
+        Sport    3,621         1.01                   1.02                 1.02
+    Biography    9,359          1.0                   0.99                  1.0
+        Music    7,092         0.99                   0.99                 0.99
+      History    7,307         0.99                   0.99                 0.99
+  Documentary   51,020         0.96                   0.95                 0.96
+       Comedy   56,585         0.94                   0.95                 0.94
+      Musical    2,740         0.93                   0.93                 0.93
+        Adult    2,236         0.57                   0.48                 0.57
+
+Step 4. Evolution of the export index by decade (blank = fewer than 100 films in the cell)
+        genre  1980s  1990s  2000s  2010s  2020s
+    Animation   1.12   1.03   1.16   1.19   1.25
+      Western                 1.22   1.08   1.22
+         News                        1.17       
+    Adventure   1.13   1.11   1.11   1.12   1.13
+     Thriller    1.2   1.23   1.15   1.08   1.09
+       Sci-Fi   1.12   1.07   1.13    1.1   1.11
+       Action   1.24   1.09   1.07   1.06   1.04
+       Horror   1.09   1.03    1.1   1.05   1.09
+       Family   1.04   1.08   1.09   1.08    1.0
+      Mystery   1.09   1.07   1.08   1.05   1.04
+        Crime    1.1   1.03   1.03   1.05   1.06
+      Fantasy   0.97   0.97   1.02   1.05   1.02
+        Drama   1.03   1.01    1.0   1.03   1.02
+      Romance   1.02   1.01    1.0   1.02   1.02
+          War   1.12    0.9   1.01   0.98   1.01
+        Sport   1.19   1.16    1.0   0.99   0.99
+    Biography   1.14   0.98   0.98   1.01   0.96
+        Music   0.98   0.94   1.01   0.99    1.0
+      History   0.96   0.87   0.98    1.0    1.0
+  Documentary   1.12   0.96   0.96   0.95   0.95
+       Comedy   0.88    0.9   0.95   0.97   0.94
+      Musical   0.84   0.76   0.93   0.99    1.0
+        Adult   0.59   0.47                     
+
+Step 5. International reach and rating
+  corr(regions, averageRating)      = -0.04
+  corr(export_index, averageRating) = -0.02
+  export_quintile   films  avg_index  avg_rating
+                1  45,795       0.21        6.27
+                2  48,371       0.49        6.26
+                3  47,720       0.95        5.95
+                4  39,461       1.35        5.95
+                5  55,796       1.88        6.32
+
+Step 6. Sanity check: most exported films of the top 3 genres
+      genre                                   primaryTitle  startYear   numVotes  regions  export_index
+  Animation                      Yobi, the Five Tailed Fox       2007      1,075      109          7.39
+  Animation                          Shaun the Sheep Movie       2015     47,844      103          3.48
+  Animation                              A Christmas Carol       2009    142,964       97          2.09
+    Western                           The Harder They Fall       2021     79,058       71          2.39
+    Western                                     Unforgiven       1992    474,988       60          1.26
+    Western                               Django Unchained       2012  1,926,394       57          1.19
+       News                                     Food, Inc.       2008     53,046       33          1.08
+       News                               Before the Flood       2016     29,839       28          0.95
+       News  Born Into Brothels: Calcutta's Red Light Kids       2004     19,082       24          0.79
+
