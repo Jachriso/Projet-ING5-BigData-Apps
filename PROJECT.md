@@ -204,3 +204,15 @@ python src/04_summary_streaming.py reports/04_streaming.txt > reports/04_summary
 ```
 
 ## AI & LLM tools usage
+
+Tool: Claude Code (Anthropic, model Claude Opus 5.5), used by Jade PARRILLA and Annebelle FAUTRAD. 
+
+| Part | AI |
+|------|----|
+| Project setup | Created the folder skeleton (a comment in each file explaining its role), centralised the paths and Spark settings in `config.py`, drafted the setup instructions of `PROJECT.md` (data download, Java, Hadoop on Windows, virtual environment). |
+| Data preparation | Wrote the skeleton of `src/01_clean.py` (one cleaning function per table) and the report layout with the write function. |
+| Data enrichment | Wrote the skeleton of `src/03_enrich.py`, reviewed our functions. |
+| Open question | Checked the data with test queries, and wrote the skeleton of `src/05_open_question.py`. |
+| Report | Reviewed our text (English corrections). Wrote no explanation or reasoning. |
+| General | Explained concepts, helped fix errors and git conflict resolution. |
+
