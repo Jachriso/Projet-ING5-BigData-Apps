@@ -23,7 +23,7 @@ from pyspark.sql.types import ArrayType, StringType, StructField, StructType
 # Add the project root to the import path so that config.py can be imported
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 import config
-import helpers
+from helpers import write, save, read_clean
 
 # Scope
 FIRST_YEAR, LAST_YEAR = 1980, 2025
@@ -52,12 +52,10 @@ RAW_PEOPLE_FILE = config.ENRICHED_DIR / "raw" / "people.jsonl"
 REPORT_FILE = config.REPORTS_DIR / "03_enrichment.txt"
 
 
-# A. Selection (Spark)
-
 def select_top_films(spark):
     """Top TOP_N_FILMS feature-length films per (genre, year), 1980-2025."""
-    basics = helpers.read_clean(spark, "title.basics")
-    ratings = helpers.read_clean(spark, "title.ratings")
+    basics = read_clean(spark, "title.basics")
+    ratings = read_clean(spark, "title.ratings")
 
     movies = (
         basics
@@ -79,7 +77,7 @@ def select_top_films(spark):
 
 def select_principals(spark, films):
     """The first N_PRINCIPALS distinct people credited on each selected film."""
-    principals = helpers.read_clean(spark, "title.principals")
+    principals = read_clean(spark, "title.principals")
     film_ids = films.select("tconst").distinct()
 
     # A person credited several times on a film keeps only their best position
@@ -456,13 +454,13 @@ def report_coverage(report, title, df, text_column):
     """Write how many records have the enriched text, and the most frequent notes."""
     total = df.count()
     with_text = df.filter(F.col(text_column).isNotNull()).count()
-    helpers.write(report, title)
-    helpers.write(report, f"  records: {total:,}")
-    helpers.write(report, f"  with {text_column}: {with_text:,} ({100 * with_text / total if total else 0:.1f} %)")
+    write(report, title)
+    write(report, f"  records: {total:,}")
+    write(report, f"  with {text_column}: {with_text:,} ({100 * with_text / total if total else 0:.1f} %)")
     for row in df.groupBy("note").count().orderBy(F.desc("count")).collect():
         if row["note"]:
-            helpers.write(report, f"  note '{row['note']}': {row['count']:,}")
-    helpers.write(report)
+            write(report, f"  note '{row['note']}': {row['count']:,}")
+    write(report)
 
 
 # Pipeline
@@ -478,15 +476,15 @@ def main():
 
     config.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     with open(REPORT_FILE, "w", encoding="utf-8") as report:
-        helpers.write(report, "IMDb - Data enrichment")
-        helpers.write(report)
+        write(report, "IMDb - Data enrichment")
+        write(report)
 
         # A. Selection (cached: reused for the ids and for the final joins)
         films = select_top_films(spark).cache()
         principals = select_principals(spark, films).cache()
-        helpers.write(report, f"Selected (film, genre) rows: {films.count():,}")
-        helpers.write(report, f"Selected (film, principal) rows: {principals.count():,}")
-        helpers.write(report)
+        write(report, f"Selected (film, genre) rows: {films.count():,}")
+        write(report, f"Selected (film, principal) rows: {principals.count():,}")
+        write(report)
 
         # B. Gathering. toLocalIterator() streams the ids to Python instead of
         #    loading them all at once: the same code works on the full dataset.
@@ -498,8 +496,8 @@ def main():
         # C. Cleaning, joins with IMDb and Parquet output
         film_info = clean_films(load_raw(spark, RAW_FILMS_FILE, FILM_SCHEMA))
         people_info = clean_people(load_raw(spark, RAW_PEOPLE_FILE, PEOPLE_SCHEMA))
-        helpers.save(films.join(film_info, "tconst", "left"), "top_films")
-        helpers.save(principals.join(people_info, "nconst", "left"), "top_films_principals")
+        save(config.ENRICHED_DIR, films.join(film_info, "tconst", "left"), "top_films")
+        save(config.ENRICHED_DIR, principals.join(people_info, "nconst", "left"), "top_films_principals")
 
         report_coverage(report, "Films (synopsis)", film_info, "synopsis")
         report_coverage(report, "Principals (biography)", people_info, "biography")
