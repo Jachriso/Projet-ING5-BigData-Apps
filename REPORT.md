@@ -123,6 +123,7 @@ At the beginning, when we had our first report on the missing values, we had the
 But we cancelled all of those options because they would have resolved any issues of the dataset and only created new ones like new foreign keys missing parent records. 
 So we changed strategies and instead of blindly changing the data, we tried to better understand the current data. for instance, replacing values by 0 could have been a huge mistake with for example the number of seasons because in this case, 0 means special seasons and episodes. Same for endYear and startYear : for a movie or a documentary for example, an endYear doesn't mean anything because it only has one year of release. 
 
+
 ## Exploration
 
 All results below are produced by `src/02_explore.py` (full output in `reports/02_exploration.txt`).
@@ -131,6 +132,18 @@ All results below are produced by `src/02_explore.py` (full output in `reports/0
 Feature-length movies: 490,270
 (movie, genre) rows:   762,427
 ```
+
+All questions start from the cleaned Parquet files produced in the Preparation step. We build two base DataFrames that are reused by almost every question :
+- movies : titles with titleType = movie and runtimeMinutes >= 40 (the AMPAS / BFI definition of a feature film), left-joined with title.ratings so that unrated movies are kept.
+- movie_genres : the same movies with the genres array exploded, so we get one row per (movie, genre). A movie with three genres counts once in each of them.
+
+Both DataFrames are cached because they are read by several questions, which avoids re-reading and re-joining the Parquet files each time. Each question is written as its own function, which keeps the script readable and makes it easy to run or debug one question at a time.
+
+We used the DataFrame API (pyspark.sql.functions and Window) everywhere rather than RDDs. 
+Spark cannot optimize RDD code, because it doesn’t know what our functions do. DataFrame code is automatically optimized by Spark (Catalyst optimizer).
+
+All thresholds (minimum votes, rating cut-offs, etc.) are defined as constants, so they can be changed without touching the query logic.
+
 
 ### Q1. Unusual runtimes by genre
 
@@ -188,12 +201,25 @@ The Longest Most Meaningless Movie in the World       1970       Drama          
                                  24 Hour Psycho       1993      Horror            1440  60.6
 ```
 
+13 701 (movie, genre) pairs have a runtime more than 2 standard deviations away from their genre average. The genres with the most outliers seem to be the most well-known genres (Thriller, Romance, Drama, Comedy). The most extreme cases are experimental or art films that are days long (Logistics runs 857 hours, Ambiancé 720 hours). These are real films, not data errors, so we kept them. 
+
+Note that one movie can appear several times (e.g. London EC1 in comedy, drama and mystery) because it is compared to each of its genres.
+
+
 **Methodology**
 
+For each genre we compute the average and the standard deviation of runtimeMinutes with a groupBy("genre"). We join these statistics back to movie_genres and compute a z-score for each movie : `z = (runtime - genre_avg) / genre_std`
+
+A movie is notably different if its runtime is far from the usual runtime of its genre. To measure "far", we use the z-score : it tells how many "typical gaps" a movie is from the genre average. We flag movies more than 2 typical gaps away, which is a common rule (only about 5% of movies normally go that far for a normal distribution).
+
+We chose this method because each genre is compared to itself. For example, 150 minutes is normal for a drama but very long for an animation movie. 
 
 
 **Alternatives considered and trade-offs**
 
+- IQR method or median : these are more robust because the mean and standard deviation are themselves pulled up by the extreme films (a single 51 420 minutes movie inflates the Documentary std a lot). 
+With a robust method, more "moderately long" films would be flagged. We kept the z-score because it is simple and easy to explain, but this is the main weakness of our approach.
+- Fixed thresholds (e.g. < 60 min or > 180 min) : simpler, but ignores the differences between genres.
 
 
 ### Q2. Top three genres per year
@@ -344,12 +370,26 @@ The Longest Most Meaningless Movie in the World       1970       Drama          
       2025    Comedy      5919816         2571     3
 ```
 
+Drama is first almost every year. The second and third places are mostly shared between Comedy, Action, Adventure and Crime. 
+ 
 **Methodology**
+ 
+We defined "popularity" as the total number of IMDb votes received by the movies of a genre in a given year. 
+The number of votes measures how many people watched and cared enough to rate a film, which is closer to "popular" than the rating itself (a 9/10 film with 50 votes is not popular).
+ 
+Steps :
+ 
+1. Filter `movie_genres` on `startYear` between 1980 and 2025.
+2. `groupBy("startYear", "genre")` and compute `sum(numVotes)` and `count(*)`.
+3. Rank genres inside each year with `row_number()` over a window partitioned by `startYear` and ordered by `total_votes` descending.
+4. Keep `rank <= 3`.
 
-
-
+A window function is the natural tool for "top N per group" in Spark, because it ranks rows inside each partition without collecting anything on the driver. The movie count is kept as an extra column to help interpret the results.
+ 
 **Alternatives considered and trade-offs**
-
+ 
+- **Number of movies per genre** : would mostly reflect production volume, and the most common genres would always win since they would be more movies produced. It measures what is produced, not what people watch.
+- **Average rating** : measures quality, not popularity, and is very sensitive to small genres with a few highly-rated films.
 
 
 ### Q3. Top three genres compared with the rest
@@ -413,12 +453,31 @@ Overall 1980-2025:
    True            215495   1361120129        6.04
 ```
 
+Votes are very concentrated : only 3 genres collect between 38% and 58% of all votes each year (around 44% on average). The peak is 1994 (58.3%), the year of *The Shawshank Redemption*, *Pulp Fiction* and *Forrest Gump*, which all belong to Drama and/or Crime.
+
+Popular does not mean better rated : in most years until 2001 the top 3 genres have a slightly higher average rating than the other genres, but from 2002 onwards it is the opposite, the "rest" is rated higher every single year. Over the whole period the top genres average 6.04 against 6.14 for the rest.
+
+The differences in rating are small (up to 0.3 points), so the main difference between the top 3 and the rest is probably in audience size, not in quality.
+
+
 **Methodology**
+ 
+We reused the top 3 DataFrame from Q2 as a lookup table : each (year, genre) in the top 3 gets a flag `is_top = True`. This table is left-joined to `movie_genres` (1980-2025) and missing flags are set to `False` with `coalesce`.
+ 
+Then, for each year, we compute with conditional aggregations (`F.when(is_top, ...)` inside `sum` / `avg`) :
+ 
+- the share of votes that goes to the top 3 genres,
+- the average rating of movies in the top 3 genres,
+- the average rating of movies in the other genres.
 
-
-
+We also computed one global comparison over the whole period by grouping on `is_top` only. Conditional aggregation lets us get all metrics in a single `groupBy` pass instead of computing the top and the rest separately and joining them afterwards.
+ 
+We compared both popularity (vote share) and quality (average rating) because the question is open, and these two dimensions give a different picture.
+ 
 **Alternatives considered and trade-offs**
-
+ 
+- **Comparing against each other genre individually** (e.g. rank 1 vs rank 10) : more detailed, but much harder to read over 46 years. Grouping into "top 3" vs "rest" gives a single, clear comparison per year.
+- **Filtering out movies with few votes** : in this question we kept all rated movies, so many small films with few votes are included in the averages. A minimum vote threshold (like in Q4) would reduce noise, at the cost of ignoring a large part of the catalogue.
 
 
 ### Q4. One-hit directors
@@ -452,13 +511,24 @@ António Borges Correia                  Antes de a Vida Começar         9.3   
           David Leland                       Concert for George         8.6            5       5.64
 ```
 
+We found 168 directors matching the criteria. Most of them are little-known directors whose "hit" seems to be a small or regional film with a few votes.
+ 
 **Methodology**
-
-
-
+ 
+1. Explode the `directors` array of `title.crew` to get one row per (movie, director).
+2. Join with `movies`, keeping only movies with at least 100 votes, so that a film rated 10/10 by five people does not count as a hit.
+3. For each director, compute in one `groupBy` with conditional aggregations :
+   - `hit_count` : number of movies with rating >= 8.0,
+   - `hit_title` / `hit_rating` : the title and rating of the hit,
+   - `other_count` and `other_avg` : the number and average rating of the remaining movies.
+4. Keep directors with `hit_count == 1`, `other_count >= 2` ("multiple" other movies) and `other_avg <= 6.0`.
+5. Join with `name.basics` to get the director's name.
+Doing everything in a single aggregation avoids splitting the data into "hits" and "others" and joining them back, which would add an extra shuffle.
+ 
 **Alternatives considered and trade-offs**
-
-
+ 
+- **Vote threshold**: 100 votes is a compromise. Without any threshold, the list is full of small movies with 5-10 votes and extreme ratings. With a higher threshold (e.g. 1,000 or 10,000 votes) the results would be more "famous" and more reliable, but many directors would lose their hit or drop below 2 other films, and the list would be much shorter. Ratings around 9+ with a few hundred votes are still suspicious (friends and family voting), which is a known limitation.
+- **Using `title.principals` (category = director) instead of `title.crew`**: title.crew lists all credited directors, while title.principals only keeps the top-billed credits, so we used title.crew.
 
 ### Q5. TV series that declined
 
@@ -491,12 +561,27 @@ Anthony Bourdain: No Reservations             8            2             9
                         Winx Club             8            2             8
 ```
 
+Out of 6 041 series with at least 3 seasons of 10+ episodes, 601 (9.9%) follow this "declining" pattern. 
+The list shows series that have lost quality over time. 
+In some rows the number of seasons is smaller than the season number (e.g. *Disappeared*: 10 seasons, worst in season 11) because some seasons have fewer than 10 episodes and are not counted.
+ 
 **Methodology**
-
-
-
+ 
+1. From `title.episode`, drop episodes without a season number.
+2. Count episodes per (series, season) and keep seasons with **>= 10 episodes**.
+3. Count those qualifying seasons per series and keep series with **>= 3 of them**. The "last season" is the highest season number among the qualifying seasons.
+4. Join the episodes of these seasons with `title.ratings` (episodes without rating are dropped).
+5. Use two window functions partitioned by series:
+   - one ordered by rating ascending → rank 1 is the worst episode,
+   - one ordered by rating descending → rank 1 is the best episode.
+   Ties on rating are broken by the number of votes (the episode with the most votes wins), so the result is deterministic.
+6. Keep series where the worst episode is in the last season and the best episode is in season 1 or 2.
+Window functions with `row_number()` are a clean way to find the "argmin / argmax" row of each group in Spark without collecting data on the driver.
+ 
 **Alternatives considered and trade-offs**
-
+ 
+- **Season average instead of a single episode**: a single episode can be an outlier (e.g. a controversial episode, or a clip show). Comparing average ratings per season would measure the decline of the show more robustly, but it is not what the question asks.
+- **Definition of "last season"**: we used the last season with >= 10 episodes. Another option would be the real final season of the show, even if it is short. We chose the first option because the question focuses on seasons with >= 10 episodes, and a 3-episode final season would not be comparable.
 
 
 ### Q6. Success across languages
@@ -532,12 +617,26 @@ Tony Leung Chiu-wai               5         10 de, en, es, fr, ko
      Robert De Niro               3         34         en, es, it
 ```
 
+We found 1 199 actors with successful films in at least 2 languages and 170 in at least 3. 
+ 
 **Methodology**
+ 
+**Defining success** : a movie is successful if its rating is >= 7.0 and it has >= 10 000 votes. The vote threshold makes sure the film was actually seen by a large audience, and the rating ensures it was well received.
+ 
+**Finding the original language** : the IMDb dataset has no "original language" column, so we had to estimate it. In `title.akas`, each title has several alternative names, each with a region and sometimes a language. Our approach :
+ 
+1. Keep the akas whose title is equal (case-insensitive) to the movie's `originalTitle`, i.e. the versions that use the original name.
+2. Take the aka's `language` if it is filled, otherwise convert its `region` to the main language of that country with a small mapping dictionary (US → en, FR → fr, JP → ja, ...), implemented as a Spark map column with `create_map` (so no Python UDF is needed).
+3. Count how many times each language appears per movie and keep the most frequent one using a window with `row_number()`.
 
-
-
+This gives a language for 94.8% of the successful movies. The other 5.2% are dropped (inner join), so they don’t count toward any actor.
+ 
+**Counting per actor** : we join `title.principals` (category actor / actress) with the successful movies and their language, then group by actor and count distinct languages with `countDistinct`. Actors with >= 2 and >= 3 languages answer the two parts of the question.
+ 
 **Alternatives considered and trade-offs**
-
+ 
+- **External source** (Wikidata, TMDB `original_language`) : this would give the real original language and would be much more accurate. It would require enrichment from an open source with lineage, as in the Enrichment section. We stayed with IMDb-only data for this exploration step, but this would be the first improvement to make.
+- **Success threshold**: 7.0 / 10,000 votes is subjective. A lower vote threshold would include more non-English films (which tend to have fewer IMDb votes), but would also include more unknown titles.
 
 
 ### Q7. Early career peak
@@ -571,12 +670,25 @@ Subhalekha Sudhakar           23        1987       2026       8.38      5.92  2.
    Mehmet Ali Erbil           15        1981       2024       5.08      2.96  2.12 The Chaos Class: Bye Bye
 ```
 
+About one third of the eligible actors (1,136 out of 3,528) peaked early. 
+
 **Methodology**
-
-
-
+ 
+1. Join actors / actresses from `title.principals` with `movies`, keeping only movies with >= 1,000 votes and a known year (to avoid noisy ratings and very obscure titles).
+2. With window functions partitioned by actor, compute the first and last year of the career and find the best-rated movie (ties broken by number of votes).
+3. Split each career in two halves at the middle year `(first_year + last_year) / 2` : movies before or at the middle are "early", the others are "late".
+4. Group by actor to compute the number of movies, the early and late average ratings, and the year and title of the best movie.
+5. Keep eligible actors: career span >= 20 years and >= 15 movies. Since only films with >= 1,000 votes are counted, this is the actor’s visible career, not their full filmography.
+6. An actor "peaked early" if both conditions hold :
+   - the early average is at least 0.5 points higher than the late average,
+   - the best-rated movie is in the first half of the career.
+Using both conditions makes the result more robust : the best movie alone could be a single lucky film, and the averages alone could hide where the actual peak was.
+ 
 **Alternatives considered and trade-offs**
-
+ 
+- **Splitting by number of movies instead of years** (first half of the filmography vs second half) : would give two groups of the same size, but an actor who made 20 films in 5 years and then a few films over 20 years would have a strange split. We chose years because the question talks about career in time.
+- **Popularity as votes instead of rating** : the question says "popularity", but the example mentions "highest rated movies", so we used the rating. Using votes would be biased towards recent films, since older films collected fewer IMDb votes.
+- **Thresholds** : the 0.5 point drop and 1,000 votes are our own choices. A larger drop gives fewer but clearer cases. Note also that the data contains some 2026 titles (announced or recently released movies), which slightly extends some careers.
 
 
 ### Q8. Multi-talented professionals
@@ -628,11 +740,33 @@ Sylvester Stallone actor+director+writer            25       6.32        5.61  0
       Priyadarshan       director+writer            24       6.86        7.12 -0.26
 ```
 
+We found 3,654 multi-talented people. The large majority (2,670) are director-writers. Only 440 people combine all three roles.
+
+Writing and directing the same film works best : director+writer movies have the highest average rating (6.42), above movies where these people only direct (6.31) or only write or act (6.24). These averages only cover the multi-talented people, not all directors, writers or actors.
+
+Acting in your own film does not help much : as soon as acting is added to the combination, the average rating goes down (actor+writer 6.14, actor+director+writer 6.21).
+
+Among the 2,735 people who have both kinds of movies, 57.2% get better ratings on the films where they hold several roles, with an average gain of +0.11. So there is a small positive effect, but it is not huge.
+Individual cases vary a lot: Woody Allen (+1.02) and Éric Rohmer (+1.65) are much better rated on their personal projects, while Tyler Perry (-1.07) is rated better when he only holds one role.
+
+
 **Methodology**
-
-
-
+ 
+1. Build a single "roles" table with one row per (movie, person, role) :
+   - directors and writers from `title.crew` (exploded arrays),
+   - actors / actresses from `title.principals`,
+   combined with `unionByName` and deduplicated with `distinct()`. We only keep movies with >= 1,000 votes.
+2. A person has a talent for a role if they held it in >= 3 movies. A person is multi-talented if they have at least 2 such talents. This avoids counting, for example, a director who once made a cameo in their own movie as an actor.
+3. For each multi-talented person and each movie, we group their roles to get the combination they held on that movie (e.g. `actor+director`), sorted alphabetically with `array_sort` so that the label is always the same.
+4. We compare ratings in two ways:
+   - per combination : average rating and votes for each role combination,
+   - per person : for each individual, average rating of their multi-role movies vs their single-role movies. This second comparison is the most interesting because it compares people with themselves, so it removes the effect of individual talent.
+Building one unified roles table with a union made it easy to treat the three roles the same way, instead of writing separate joins for each combination.
+ 
 **Alternatives considered and trade-offs**
+ 
+- **Including other roles** (producer, composer, casting_director, ...) : `title.principals` contains these categories, and including them would give a broader definition of multi-talented. We kept the three roles given as examples in the question to keep the analysis focused.
+- **Selection bias** : people usually take several roles on projects that are personal to them, which may be different in nature (smaller budget, more artistic). So the rating difference cannot be read as "holding several roles causes better films", only as a correlation.
 
 
 ## Enrichment
@@ -751,5 +885,164 @@ We chose to store the raw and final results in different formats because of thei
 Our goal was to have reliable data even with lower coverage and that our code scalability. 
 
 ## Streaming
+
+The streaming part is made of four components (see `PROJECT.md` for how to start them) :
+- `docker-compose.yml` : a single Kafka broker (`apache/kafka:3.9.0`) on `localhost:9092`.
+- `src/04_wiki_producer.py` : reads the live Wikimedia recentchange stream and sends the events to the Kafka topic `wiki-changes`.
+- `src/04_streaming.py`: a PySpark Structured Streaming job that reads the topic, matches the events with our IMDb data and outputs the matching edits and per-window counts.
+- `src/04_summary_streaming.py`: a small Python script that summarizes the raw console output of the streaming job (see below).
+
+### Results
+
+The pipeline was run for a test window of about 20 to 30 minutes. Because the results were only printed to the console, we could only save the last part of the output, which is stored in `reports/04_streaming.txt`. All the numbers below come from this part of the output.
+
+The job produces two outputs:
+
+1. **Matching events**: every Wikipedia edit whose page corresponds to an IMDb film or person.
+2. **Window counts**: number of edits and distinct pages per 5-minute window and per kind (film / person).
+
+The raw output is hard to read: Spark prints a table for every micro-batch, most of them empty, and in update mode the same window is printed again each time its count changes. So we wrote `src/04_summary_streaming.py`, which reads `reports/04_streaming.txt` and keeps only :
+- the non-empty rows of the matching events,
+- the last printed count of each (window, kind), which is the final value.
+
+The tables below are the output of this script, saved in `reports/04_summary_streaming.txt`.
+
+Matching events captured in about 3 minutes :
+
+```text
+
+event_time           title                       kind    imdb_id    type  user              bot
+
+2026-11-15 23:20:54  John Le Mesurier            person  nm0494452  edit  AMCKen            false
+
+2026-11-15 23:20:59  Maria Callas                person  nm0006568  edit  Mason.Jones       false
+
+2026-11-15 23:21:09  I Was Born, But...          film    tt0023634  edit  KyleBYerrick      false
+
+2026-11-15 23:21:22  Larry Lieber                person  nm1293367  log   LettherebeMarios  false
+
+2026-11-15 23:21:22  Larry Lieber                person  nm1293367  log   LettherebeMarios  false
+
+2026-11-15 23:21:27  John Michael McDonagh       person  nm0567620  edit  ~2026-60826-12    false
+
+2026-11-15 23:21:29  John Roberts                person  nm0731253  edit  GreenC bot        true
+
+2026-11-15 23:21:49  Asher Keddie                person  nm0444291  edit  GreenC bot        true
+
+2026-11-15 23:21:59  Ashley Taylor               person  nm1338025  edit  GreenC bot        true
+
+2026-11-15 23:22:04  Larry Lieber                person  nm1293367  log   LettherebeMarios  false
+
+2026-11-15 23:22:01  Larry Lieber                person  nm1293367  edit  LettherebeMarios  false
+
+2026-11-15 23:22:01  Dan Aykroyd                 person  nm0000101  edit  Djs122579         false
+
+2026-11-15 23:22:09  Top Hat                     film    tt0027125  edit  KyleBYerrick      false
+
+2026-11-15 23:21:56  Mastodon                    person  nm2438166  edit  PowerfulEdit      false
+
+2026-11-15 23:22:10  As It Is in Heaven          film    tt0382330  edit  GreenC bot        true
+
+2026-11-15 23:22:11  1917                        film    tt8579674  edit  Rcb1              false
+
+2026-11-15 23:22:23  Joseph Sikora               person  nm0797746  edit  Ugggsw            false
+
+2026-11-15 23:22:31  Audra McDonald              person  nm0567653  edit  GreenC bot        true
+
+2026-11-15 23:23:17  A Star Is Born (1937 film)  film    tt1517451  edit  KyleBYerrick      false
+
+```
+
+Last state of the window aggregation for the window :
+
+```text
+
+window                                      kind    edits  pages
+
+{2026-11-15 23:20:00, 2026-11-15 23:25:00}  person  17     13
+
+{2026-11-15 23:20:00, 2026-11-15 23:25:00}  film    7      7
+
+```
+
+The filter is broad enough : even in the short excerpt we saved, 19 matching events are printed, and the window counter shows 24 matching events (17 on people, 7 on films) for the single window 23:20 - 23:25. 
+
+Most matches are people pages (actors, directors, writers). This makes sense because there are many more people than films in our list of keys, and biographies are edited often.
+
+Some of the matched edits are made by a bot (`GreenC bot`). We did not remove bot edits, but they are easy to exclude using the bot column (true / false).
+
+Events do not always arrive in order : the Mastodon edit happened at 23:21:56 but arrived after edits made at 23:22:01 and 23:22:04. Because we group events by the time they happened (event time), it was still counted in the correct window.
+
+We can see some limitations in the output : Larry Lieber appears several times in a few seconds because log events (page moves, protections) are not edits but are not filtered out. Filtering on type == "edit" would remove them.
+
+
+
+### Methodology
+
+**1. Ingestion**
+
+The producer connects to `https://stream.wikimedia.org/v2/stream/recentchange` with `requests` in streaming mode and reads the Server-Sent Events line by line. It sends a descriptive `User-Agent`, as required by the Wikimedia API policy. Before sending to Kafka, it keeps only :
+
+- `wiki == "enwiki"` : English Wikipedia, because IMDb `primaryTitle` and `primaryName` are mostly in English,
+- `namespace == 0` : real articles (not talk pages, user pages, files, etc.).
+
+This first filter removes most of the global Wikimedia traffic (Wikidata, Commons, other languages), so Kafka and Spark only handle events that could be relevant. Each event is sent to the topic as JSON.
+
+**2. Reading the stream in Spark**
+
+Spark reads the topic with `readStream.format("kafka")` from the `latest` offsets, casts the Kafka `value` to a string and parses it with `from_json` and an explicit schema (title, type, user, bot, timestamp, server_url). Using an explicit schema is required in Structured Streaming and also ignores the many fields we do not need. The Wikimedia `timestamp` is converted to a proper `event_time` column.
+
+**3. Filtering: matching with IMDb (stream-static join)**
+
+The static side is a table of "keys" built once from the cleaned IMDb data:
+
+- **films**: movies with at least 1,000 votes (well-known enough to have a Wikipedia page), keyed by their lowercase `primaryTitle`,
+- **people**: every person credited (`title.principals`) in one of these films, keyed by their lowercase `primaryName`.
+
+Both are combined with `unionByName`, deduplicated on the key and cached. On the streaming side, we lowercase the page title and remove the Wikipedia disambiguation suffix for films, e.g. `"A Star Is Born (1937 film)"` becomes `"a star is born"`, with a regular expression. Then a *stream-static inner join* on the key keeps only the events about our films or people and adds the `kind` and `imdb_id` columns.
+
+A stream-static join is supported by Spark without any state : each micro-batch is simply joined with the static table. Since the static table fits in memory, Spark can broadcast it.
+
+**4. Aggregation with event-time windows**
+
+Matching events are grouped by 5-minute tumbling windows on `event_time` and by `kind`, and we compute the number of edits (`count`) and the number of distinct pages (`approx_count_distinct`, because exact distinct counts are not supported in streaming aggregations).
+
+**5. Output**
+
+Two queries write to the console :
+- raw matches in append mode (each event printed once),
+- window counts in update mode (a window is printed again every time its count changes, so we see the counts grow live).
+
+
+### Late arriving data
+
+We use event time (the time of the edit on Wikipedia) and not processing time (the time Spark receives it). This way an event is always counted in the window where it really happened, even if it arrives late because of network delays, a slow producer, or a restart of the producer or Kafka.
+
+To handle late data we use a watermark of 10 minutes :
+
+```python
+
+matches.withWatermark("event_time", "10 minutes").groupBy(F.window("event_time", "5 minutes"), "kind")
+
+```
+
+How it works :
+- Spark keeps track of the latest `event_time` it has seen. The watermark is that time minus 10 minutes.
+- An event that is late but newer than the watermark is still added to its window, and the updated count is printed. This is what happened with the *Mastodon* event above.
+- Once the watermark passes the end of a window, the window is considered final: its state is removed from memory and any event that arrives later for this window is dropped.
+
+Why 10 minutes ? Wikimedia events normally arrive within a few seconds, so most events are on time. 10 minutes is a comfortable margin that covers bigger delays (for example a producer restart) while keeping only a few windows in memory. Without a watermark, Spark would have to keep every window forever in case a late event arrives, and memory would keep growing in a long-running job.
+
+
+### Alternatives considered and trade-offs
+
+- Filtering in the producer vs in Spark : we filter on `enwiki` and articles in the producer to reduce the volume sent to Kafka. Doing everything in Spark would keep the raw stream available for other uses, but would send much more data through Kafka for nothing.
+- Reusing the Wikipedia URLs from the Enrichment step would give exact matches, but only for the small set of enriched films, which would not give enough matches in 15 to 30 minutes.
+- Watermark length : a longer watermark accepts later data but keeps more state in memory and delays the final results. A shorter one is faster but may drop valid events.
+- We did not set a `checkpointLocation`, so a restarted job starts again from the latest offsets. For a production job, a checkpoint directory would allow restarting exactly where it stopped.
+- We used the console sink because it is the simplest way to see the results live. Its main drawback showed up during our test : the output is not saved anywhere, so we could only keep part of the logs. A file sink (e.g. `writeStream.format("parquet")` with a checkpoint) or another Kafka topic would keep every result and allow us to compute exact totals over the whole test window. A quick fix would be to redirect the console output to a file (`python src/04_streaming.py | tee reports/04_streaming.txt`).
+
+
+
 
 
