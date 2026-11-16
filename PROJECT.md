@@ -215,4 +215,4 @@ Annabelle Fautrad : Claude Code (Anthropic, model Claude Opus 5.5).
 | Data enrichment | Wrote the skeleton of `src/03_enrich.py`, reviewed our functions. |
 | Open question | Checked the data with test queries, and wrote the skeleton of `src/05_open_question.py`. |
 | Report | Reviewed our text (English corrections). Wrote no explanation or reasoning. |
-| General | Explained concepts, helped fix errors and git conflict resolution. Tturning the raw console outputs (`reports/*.txt`) into readable tables and summaries for `REPORT.md`, e.g. the streaming summary script `src/04_summary_streaming.py`.|
+| General | Explained concepts, helped fix errors and git conflict resolution (commit for a merge with the main branch and the open_question branch). Tturning the raw console outputs (`reports/*.txt`) into readable tables and summaries for `REPORT.md`, e.g. the streaming summary script `src/04_summary_streaming.py`.|
