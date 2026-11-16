@@ -206,6 +206,7 @@ python src/04_summary_streaming.py reports/04_streaming.txt > reports/04_summary
 ## AI & LLM tools usage
 
 Jade Parrilla : Claude Code (Anthropic, model Claude Opus 5.5). 
+Annabelle Fautrad : Claude Code (Anthropic, model Claude Opus 5.5). 
 
 | Part | AI |
 |------|----|
@@ -214,4 +215,4 @@ Jade Parrilla : Claude Code (Anthropic, model Claude Opus 5.5).
 | Data enrichment | Wrote the skeleton of `src/03_enrich.py`, reviewed our functions. |
 | Open question | Checked the data with test queries, and wrote the skeleton of `src/05_open_question.py`. |
 | Report | Reviewed our text (English corrections). Wrote no explanation or reasoning. |
-| General | Explained concepts, helped fix errors and git conflict resolution. |
+| General | Explained concepts, helped fix errors and git conflict resolution. Tturning the raw console outputs (`reports/*.txt`) into readable tables and summaries for `REPORT.md`, e.g. the streaming summary script `src/04_summary_streaming.py`.|
