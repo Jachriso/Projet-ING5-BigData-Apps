@@ -205,7 +205,7 @@ python src/04_summary_streaming.py reports/04_streaming.txt > reports/04_summary
 
 ## AI & LLM tools usage
 
-Tool: Claude Code (Anthropic, model Claude Opus 5.5), used by Jade PARRILLA and Annebelle FAUTRAD. 
+Jade Parrilla : Claude Code (Anthropic, model Claude Opus 5.5). 
 
 | Part | AI |
 |------|----|
@@ -215,4 +215,3 @@ Tool: Claude Code (Anthropic, model Claude Opus 5.5), used by Jade PARRILLA and 
 | Open question | Checked the data with test queries, and wrote the skeleton of `src/05_open_question.py`. |
 | Report | Reviewed our text (English corrections). Wrote no explanation or reasoning. |
 | General | Explained concepts, helped fix errors and git conflict resolution. |
-
