@@ -1042,7 +1042,153 @@ Why 10 minutes ? Wikimedia events normally arrive within a few seconds, so most 
 - We did not set a `checkpointLocation`, so a restarted job starts again from the latest offsets. For a production job, a checkpoint directory would allow restarting exactly where it stopped.
 - We used the console sink because it is the simplest way to see the results live. Its main drawback showed up during our test : the output is not saved anywhere, so we could only keep part of the logs. A file sink (e.g. `writeStream.format("parquet")` with a checkpoint) or another Kafka topic would keep every result and allow us to compute exact totals over the whole test window. A quick fix would be to redirect the console output to a file (`python src/04_streaming.py | tee reports/04_streaming.txt`).
 
+## Open question
+Full output: [reports/05_open_question.txt](reports/05_open_question.txt)
 
+For the open question, we tried to answer the following question: **which film genres travel best internationally once popularity is taken into account, and has this changed between 1980 and 2025?**
 
+We chose this question because the table `title.akas` lists the titles of each film in different regions, so we can use it to measure how far a film travels. But popular films have many more regional titles than the others. A simple ranking of the genres would only tell us which genres are popular, and this is why we wanted to take popularity into account.
 
+### Answer
 
+According to our dataset, **three genres travel better than the others: Animation, Western and News**. Their films have between 15 % and 19 % more regional titles than the films with the same popularity released in the same decade. With our main index, Animation is first, but this order is not robust: in our two robustness tests, Animation falls to third place behind Western or News. What is robust is the top three itself, and the bottom of the ranking: **Comedy, Musical, Documentary** and above all **Adult** travel less than expected.
+
+The ranking changed between 1980 and 2025. **Animation** improved the most and has the highest value of the 2020s, whereas **Action, Thriller and Sport**, which had the highest indices in the 1980s and 1990s, are now close to the average. Finally, travelling far does not mean being better rated: the international reach is not linked to the average rating of a film.
+
+### Scope and measure
+
+We used the same definition of a film as in the enrichment step: `titleType = "movie"`, at least 40 minutes, between 1980 and 2025, with a rating and with at least one genre. This gives us **237,143 films**, and only 352 of them (0.1 %) have no regional title. We removed the region `XWW` because "World-wide" is not a country.
+
+```
+FIRST_YEAR, LAST_YEAR = 1980, 2025
+MIN_FEATURE_RUNTIME = 40      # feature-length film, in minutes
+MIN_GENRE_FILMS = 500         # genres with fewer films are left out
+MIN_CELL_FILMS = 100          # minimum films for a (genre, decade) value
+```
+
+**Additional data:** we did not need any additional data. We only used the cleaned IMDb tables (`title.basics`, `title.ratings` and `title.akas`) from the preparation step, and no external source. We did not use the Wikipedia and Wikidata data from the enrichment step either, because the question only needs the regions, the votes, the ratings and the genres. The only limit is that the number of regional titles is a proxy of the real international distribution, and data like box office or release dates by country would have been better, but they are not in the dataset.
+
+We defined the **international reach** of a film as the number of distinct regions where it has a title in `title.akas`. It is not a perfect measure of the real distribution, but it is the only one available in the dataset.
+
+Our first result showed us that we could not use it directly: the correlation between the number of regions and the logarithm of the number of votes is **0.77**. A film with more than 100,000 votes has 47 regions on average, against 3 for a film with fewer than 10 votes. So we compare each film with the films which have the same popularity and the same decade:
+- The **vote bucket** is `floor(log10(numVotes))`, capped at 5 (1-9 votes, 10-99 votes, ..., 100,000+ votes).
+- The **export index** of a film is its number of regions divided by the mean number of regions of the films of the same bucket and decade. 1.00 means "as expected" and 1.20 means 20 % more regions than expected.
+
+The index of a genre is the mean of the index of its films (a film with several genres is counted in each of them). We only kept the genres with at least 500 films.
+
+### Which genres travel the best?
+
+| Adjusted rank | Genre | Films | Avg regions | Raw rank | Export index |
+|---:|------|---------:|---------:|---------:|---------:|
+| 1 | Animation | 5,595 | 13.6 | 2 | 1.19 |
+| 2 | Western | 787 | 11.2 | 9 | 1.16 |
+| 3 | News | 669 | 6.6 | 21 | 1.15 |
+| 4 | Adventure | 12,577 | 14.5 | 1 | 1.12 |
+| 5 | Sci-Fi | 6,563 | 12.8 | 3 | 1.11 |
+| 5 | Thriller | 24,475 | 11.5 | 7 | 1.11 |
+| 7 | Action | 25,339 | 12.2 | 6 | 1.09 |
+| 8 | Horror | 22,135 | 10.7 | 10 | 1.07 |
+| 9 | Mystery | 10,232 | 12.7 | 4 | 1.06 |
+| 9 | Family | 9,598 | 9.5 | 14 | 1.06 |
+| 11 | Crime | 19,211 | 12.3 | 5 | 1.05 |
+| 12 | Fantasy | 8,086 | 11.5 | 7 | 1.02 |
+| 12 | Drama | 104,644 | 9.5 | 14 | 1.02 |
+| 14 | Romance | 23,732 | 10.5 | 11 | 1.01 |
+| 14 | War | 3,411 | 9.5 | 14 | 1.01 |
+| 14 | Sport | 3,621 | 9.5 | 14 | 1.01 |
+| 17 | Biography | 9,359 | 10.2 | 12 | 1.00 |
+| 18 | History | 7,307 | 9.2 | 18 | 0.99 |
+| 18 | Music | 7,092 | 8.5 | 19 | 0.99 |
+| 20 | Documentary | 51,020 | 5.7 | 22 | 0.96 |
+| 21 | Comedy | 56,585 | 9.6 | 13 | 0.94 |
+| 22 | Musical | 2,740 | 7.5 | 20 | 0.93 |
+| 23 | Adult | 2,236 | 2.4 | 23 | 0.57 |
+
+Here is the ranking of the genres. The "raw rank" is the ranking with the mean number of regions, and the adjusted rank is the one with our export index. The adjustment changes the result a lot:
+- **Adventure** is first with the raw mean (14.5 regions) but only fourth after the adjustment. A part of its raw result comes from its popularity.
+- **News** (median of 30 votes) goes from the 21st to the 3rd place and **Western** from the 9th to the 2nd place. Their films are not very popular, but they have many regions compared to the films with the same popularity.
+- The top three are close to each other (1.15 to 1.19). Apart from them and Adult, all the genres are between 0.93 and 1.12. **Adult (0.57) is the only real outlier.**
+
+We also checked that this ranking does not come from a particularity of IMDb. IMDb adds machine-translated titles in 7 regions (`IN`, `DE`, `JP`, `FR`, `ES`, `IT`, `PT`) as a block, mostly on popular films: 96.5 % of the films with more than 100,000 votes have the full block. We calculated the index again in two other ways: without counting these 7 regions, and without the 10,769 films which have the full block.
+
+| Genre | All regions | Without the 7 regions | Without the films with the block |
+|------|---------:|---------:|---------:|
+| Animation | 1.19 (1st) | 1.16 (3rd) | 1.15 (3rd) |
+| Western | 1.16 (2nd) | 1.17 (2nd) | 1.17 (1st) |
+| News | 1.15 (3rd) | 1.18 (1st) | 1.16 (2nd) |
+| Adventure | 1.12 | 1.12 | 1.11 |
+| Thriller | 1.11 | 1.11 | 1.13 |
+| Sci-Fi | 1.11 | 1.10 | 1.13 |
+| Action | 1.09 | 1.09 | 1.10 |
+| Documentary | 0.96 | 0.95 | 0.96 |
+| Comedy | 0.94 | 0.95 | 0.94 |
+| Musical | 0.93 | 0.93 | 0.93 |
+| Adult | 0.57 | 0.48 | 0.57 |
+
+Here is the result of the robustness test. The three genres of the top stay at the top in every version, with an index between 1.15 and 1.19, and the bottom (Adult, Musical, Comedy, Documentary) does not move. The other genres change by 0.03 at most. But the order inside the top three changes: Animation is first only when we count all the regions, so a part of its advantage comes from the block. Western and News are also small genres (787 and 669 films), so we cannot say that one of the three travels better than the two others. We can only say that these three travel better than the rest.
+
+### Has it changed between 1980 and 2025?
+
+| Genre | 1980s | 1990s | 2000s | 2010s | 2020s |
+|------|------:|------:|------:|------:|------:|
+| Animation | 1.12 | 1.03 | 1.16 | 1.19 | 1.25 |
+| Thriller | 1.20 | 1.23 | 1.15 | 1.08 | 1.09 |
+| Action | 1.24 | 1.09 | 1.07 | 1.06 | 1.04 |
+| Sport | 1.19 | 1.16 | 1.00 | 0.99 | 0.99 |
+| Documentary | 1.12 | 0.96 | 0.96 | 0.95 | 0.95 |
+| Biography | 1.14 | 0.98 | 0.98 | 1.01 | 0.96 |
+| War | 1.12 | 0.90 | 1.01 | 0.98 | 1.01 |
+| History | 0.96 | 0.87 | 0.98 | 1.00 | 1.00 |
+| Comedy | 0.88 | 0.90 | 0.95 | 0.97 | 0.94 |
+| Musical | 0.84 | 0.76 | 0.93 | 0.99 | 1.00 |
+| Adventure | 1.13 | 1.11 | 1.11 | 1.12 | 1.13 |
+| Drama | 1.03 | 1.01 | 1.00 | 1.03 | 1.02 |
+
+Here are the genres where we can see a change, plus Adventure and Drama as examples of stable genres. We did not put the genres whose index changes by less than 0.1 over the five decades (Sci-Fi, Horror, Romance, Family, Mystery, Crime, Fantasy, Music). We also did not give a value when a genre has fewer than 100 films in a decade, so we cannot say much about Western, News and Adult, which have values for only three decades, one decade and two decades.
+
+We can see these movements:
+- **Animation** is the genre which improved the most (from 1.03 in the 1990s to 1.25 in the 2020s). It has the highest value of the 2020s, but Western is close (1.22).
+- In the 1980s, **Action (1.24), Thriller (1.20) and Sport (1.19)** had the highest indices, and in the 1990s it was Thriller (1.23) and Sport (1.16). Today, Sport (0.99) and **Documentary (0.95)** are at or below the average, and Action (1.04) and Thriller (1.09) are only slightly above it.
+- **Biography** goes down (1.14 to 0.96), **Musical** and **History** improve (0.76 to 1.00 and 0.87 to 1.00), and **Comedy** improves slowly (0.88 to 0.94). **War** goes down in the 1990s and then comes back to 1.01.
+
+We must remember that the index is compared with the films of the same decade: a decrease means that a genre travels less than the other films of its decade, not that it has fewer regions than before.
+
+### International reach and rating
+
+We also wanted to know if the films which travel the most have better ratings. The correlation between the number of regions and the average rating is -0.04 (-0.02 with the export index). We also split the films into five groups with the quintiles of the export index (the groups have between 39,461 and 55,796 films because of tied values). The average rating is between 5.95 and 6.32 in each group, with no clear trend. So the international reach depends on the popularity of a film but not on its rating. We can only say this about the rating given by the IMDb voters, which is not a measure of the quality of a film.
+
+### Sanity check
+
+As a last check, we listed the three most exported films of the top 3 genres: Yobi, the Five Tailed Fox, Shaun the Sheep Movie and A Christmas Carol for Animation, The Harder They Fall, Unforgiven and Django Unchained for Western, and Food, Inc. for News. Most of them are well-known international titles, so the results look coherent. The exception is Yobi, which has only 1,075 votes but 109 regions (index of 7.39). It shows that a few films can have a very high index, and that the number of regions is not only linked to success. We also noticed that the News films look more like documentaries, so we stay careful with this genre.
+
+### Methodological explanation
+
+#### Methodology and why it was chosen
+
+We did the whole analysis in Spark, with the cleaned tables of the preparation step. We think that this analysis is not trivial, because the answer cannot be read in a single table and a simple average would give a wrong result. It combines three tables and several Spark operations:
+- **Three tables:** `title.basics` gives the type, the runtime, the year and the genres of the films, `title.ratings` gives the votes and the rating, and `title.akas` gives the regional titles. We joined `basics` and `ratings` with an inner join to keep the rated films. Then we kept only these films in `akas` with a `left_semi` join before any aggregation. This table has around 60 million rows, so we wanted to reduce it as soon as possible. After the count, we joined the result back to our films with a left join, and the films without regional title got 0.
+- **Genre explosion:** the `genres` column is an array, so we used `explode` to get one row for each pair (film, genre). A film with several genres is counted in each of them.
+- **Conditional aggregation:** in only one pass over `akas`, we calculated three counts for each film with `countDistinct` and `when`: all the regions, the regions without the 7 regions of the machine-translated block, and the number of regions of the block. We used them for the robustness test without reading the big table three times.
+- **Normalisation by group:** we calculated the mean number of regions of each group (vote bucket and decade), joined it back to the films and divided the number of regions of each film by it. This gives the export index. We also used window functions to rank the genres, a pivot to build the table by decade, and `approxQuantile` for the quintiles.
+
+We needed this normalisation because of our first result: the number of regions is strongly linked to the number of votes (correlation of 0.77). Without it, we would only have ranked the most popular genres. We used the number of regions because it is simple and available for all the films, and a logarithm for the votes because the number of votes goes from 1 to millions and the regions increase with the order of magnitude of the votes. We compared the films by decade because the number of regional titles is not the same for an old and a recent film. We also limited the results to the genres with 500 films and the cells with 100 films, so that a few films cannot make a ranking alone.
+
+We built the answer in 6 steps: the link with popularity, the ranking, the robustness test, the evolution by decade, the link with the rating and the sanity check. Each step relies on the previous one: we needed to show that popularity matters before adjusting for it, and we needed to check how solid the ranking is before looking at its evolution.
+
+We stayed consistent with the choices of the preparation step: the titles with no region were removed from the count, so the number of regions can be underestimated for some films.
+
+#### Alternatives considered and trade-offs
+
+The first idea was to rank the genres with their average number of regions. But our first results showed that popularity explained most of the differences, so this ranking would have been a ranking of the most popular genres (Adventure first, News 21st). This is why we used the export index. The limit is that the buckets are wide (a factor of 10), so some effect of popularity can stay inside a bucket. We accepted it because the index is easy to read (1.20 means 20 % more regions than expected).
+
+For the machine-translated block, we could have removed it directly, but we did not know how much it changed the results. So we kept the full index as the main result and compared it with two other versions. The test showed that the general picture is stable (same top three, same bottom) but that the order inside the top three is not. This is why we keep the simplest version as the main result, but we only conclude on the group of three genres and not on a single winner.
+
+We used the regions and not the languages, because the `language` column of `title.akas` has more missing values than the `region` column (32.55 % against 21.53 %, see the Preparation section).
+
+Our analysis also has some limits:
+- A regional title is not a proof that the film was distributed in this country.
+- A film with several genres is counted in each of its genres, so the genres are not independent.
+- The results for the small genres (Western, News, Adult) and for the first decades rely on fewer films.
+- We can say which genres have more regional titles than the other films with the same popularity, but we cannot say why.
+
+Our goal was to answer the question with a measure which is simple to explain and checked by a robustness test, even if it is only a proxy of the real international distribution.
