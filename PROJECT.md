@@ -29,15 +29,14 @@ The resulting layout is:
 data/
 ├── raw/        # Raw IMDb files (.tsv.gz), never modified
 ├── clean/      # Cleaned data (Parquet), produced by src/01_clean.py
-├── enriched/   # Wikidata / Wikipedia enrichment, produced by src/03_enrich.py
-└── gold/       # Reserved for final analysis tables (currently unused)
+└── enriched/   # Wikidata / Wikipedia enrichment, produced by src/03_enrich.py
 ```
 
 Bash:
 
 ```bash
 # Create the `data/` folder and its subfolders
-mkdir -p data/raw data/clean data/enriched data/gold
+mkdir -p data/raw data/clean data/enriched
 
 # Download the raw IMDb datasets into `data/raw/`
 for f in name.basics title.akas title.basics title.crew title.episode title.principals title.ratings; do
@@ -54,7 +53,7 @@ PowerShell:
 
 ```powershell
 # Create the `data/` folder and its subfolders
-"raw", "clean", "enriched", "gold" | ForEach-Object { New-Item -ItemType Directory -Force -Path "data/$_" | Out-Null }
+"raw", "clean", "enriched" | ForEach-Object { New-Item -ItemType Directory -Force -Path "data/$_" | Out-Null }
 
 # Download the raw IMDb datasets into `data/raw/`
 $files = "name.basics", "title.akas", "title.basics", "title.crew", "title.episode", "title.principals", "title.ratings"
