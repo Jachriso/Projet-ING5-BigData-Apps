@@ -16,6 +16,7 @@ from pyspark.sql import functions as F
 # Add the project root to the import path so that config.py can be imported
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 import config
+from helpers import write, save
 
 CURRENT_YEAR = date.today().year
 SERIES_TYPES = ["tvSeries", "tvMiniSeries"]
@@ -38,15 +39,6 @@ NUMERIC = {
     "title.principals": {"ordering": "int"},
     "title.ratings": {"averageRating": "double", "numVotes": "int"},
 }
-
-
-# Helpers
-
-def write(report, text=""):
-    """Print a line to the terminal and write it to the report."""
-    print(text, flush=True)
-    report.write(text + "\n")
-    report.flush()
 
 
 def to_int(df, columns):
@@ -238,11 +230,6 @@ CLEANERS = {
 }
 
 
-def save(df, name):
-    path = (config.CLEAN_DIR / f"{name}.parquet").as_posix()
-    df.write.mode("overwrite").parquet(path)
-
-
 def read_clean(spark, name):
     path = (config.CLEAN_DIR / f"{name}.parquet").as_posix()
     return spark.read.parquet(path)
@@ -329,7 +316,7 @@ def main():
             df = read_raw(spark, name)
             profiles[name] = profile(df, name, rules.get(name, []))
             all_nulls += report_nulls(profiles[name], df.columns, name, report)
-            save(clean(df), name)
+            save(config.CLEAN_DIR, clean(df), name)
             clean_rows[name] = read_clean(spark, name).count()
 
         write(report, "Q2. Five columns with the highest percentage of null values")

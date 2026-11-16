@@ -1,30 +1,19 @@
-import pyspark.sql.functions as F
-
 import config
+
 
 def write(report, text=""):
     """Print a line to the terminal and write it to the report."""
-    print(text)
+    print(text, flush=True)
     report.write(text + "\n")
     report.flush()
 
-def to_int(df, columns):
-    """Cast columns to integer (unconvertible values become null)."""
-    for c in columns:
-        df = df.withColumn(c, F.col(c).try_cast("int"))
-    return df
 
-def to_list(df, columns, sep=","):
-    """Split text columns "a,b,c" into lists ["a", "b", "c"]."""
-    for c in columns:
-        df = df.withColumn(c, F.split(F.col(c), sep))
-    return df
+def save(path, df, name):
+    """Write a DataFrame as Parquet to <path>/<name>.parquet (path is a config folder)."""
+    path = (path / f"{name}.parquet").as_posix()
+    df.write.mode("overwrite").parquet(path)
+
 
 def read_clean(spark, name):
     path = (config.CLEAN_DIR / f"{name}.parquet").as_posix()
     return spark.read.parquet(path)
-
-
-def save(df, name):
-    path = (config.ENRICHED_DIR / f"{name}.parquet").as_posix()
-    df.write.mode("overwrite").parquet(path)
