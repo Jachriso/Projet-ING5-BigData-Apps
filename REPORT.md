@@ -84,7 +84,7 @@ The Longest Most Meaningless Movie in the World       1970       Drama          
                                  24 Hour Psycho       1993      Horror            1440  60.6
 ```
 
-13 701 (movie, genre) pairs have a runtime more than 2 standard deviations away from their genre average. The genres with the most outliers seems to be the most well-known genres (Thriller, Romance, Drama, Comedy). The most extreme cases are experimental or art films that are days long (Logistics runs 857 hours, Ambiancé 720 hours). These are real films, not data errors, so we kept them. 
+13 701 (movie, genre) pairs have a runtime more than 2 standard deviations away from their genre average. The genres with the most outliers seem to be the most well-known genres (Thriller, Romance, Drama, Comedy). The most extreme cases are experimental or art films that are days long (Logistics runs 857 hours, Ambiancé 720 hours). These are real films, not data errors, so we kept them. 
 
 Note that one movie can appear several times (e.g. London EC1 in comedy, drama and mystery) because it is compared to each of its genres.
 
@@ -394,13 +394,24 @@ António Borges Correia                  Antes de a Vida Começar         9.3   
           David Leland                       Concert for George         8.6            5       5.64
 ```
 
+We found 168 directors matching the criteria. Most of them are little-known directors whose "hit" seems to be a small or regional film with a few votes.
+ 
 **Methodology**
-
-
-
+ 
+1. Explode the `directors` array of `title.crew` to get one row per (movie, director).
+2. Join with `movies`, keeping only movies with at least 100 votes, so that a film rated 10/10 by five people does not count as a hit.
+3. For each director, compute in one `groupBy` with conditional aggregations :
+   - `hit_count` : number of movies with rating >= 8.0,
+   - `hit_title` / `hit_rating` : the title and rating of the hit,
+   - `other_count` and `other_avg` : the number and average rating of the remaining movies.
+4. Keep directors with `hit_count == 1`, `other_count >= 2` ("multiple" other movies) and `other_avg <= 6.0`.
+5. Join with `name.basics` to get the director's name.
+Doing everything in a single aggregation avoids splitting the data into "hits" and "others" and joining them back, which would add an extra shuffle.
+ 
 **Alternatives considered and trade-offs**
-
-
+ 
+- **Vote threshold**: 100 votes is a compromise. Without any threshold, the list is full of small movies with 5-10 votes and extreme ratings. With a higher threshold (e.g. 1,000 or 10,000 votes) the results would be more "famous" and more reliable, but many directors would lose their hit or drop below 2 other films, and the list would be much shorter. Ratings around 9+ with a few hundred votes are still suspicious (friends and family voting), which is a known limitation.
+- **Using `title.principals` (category = director) instead of `title.crew`**: title.crew lists all credited directors, while title.principals only keeps the top-billed credits, so we used title.crew.
 
 ### Q5. TV series that declined
 
@@ -433,12 +444,27 @@ Anthony Bourdain: No Reservations             8            2             9
                         Winx Club             8            2             8
 ```
 
+Out of 6 041 series with at least 3 seasons of 10+ episodes, 601 (9.9%) follow this "declining" pattern. 
+The list shows series that have lost quality over time. 
+In some rows the number of seasons is smaller than the season number (e.g. *Disappeared*: 10 seasons, worst in season 11) because some seasons have fewer than 10 episodes and are not counted.
+ 
 **Methodology**
-
-
-
+ 
+1. From `title.episode`, drop episodes without a season number.
+2. Count episodes per (series, season) and keep seasons with **>= 10 episodes**.
+3. Count those qualifying seasons per series and keep series with **>= 3 of them**. The "last season" is the highest season number among the qualifying seasons.
+4. Join the episodes of these seasons with `title.ratings` (episodes without rating are dropped).
+5. Use two window functions partitioned by series:
+   - one ordered by rating ascending → rank 1 is the worst episode,
+   - one ordered by rating descending → rank 1 is the best episode.
+   Ties on rating are broken by the number of votes (the episode with the most votes wins), so the result is deterministic.
+6. Keep series where the worst episode is in the last season and the best episode is in season 1 or 2.
+Window functions with `row_number()` are a clean way to find the "argmin / argmax" row of each group in Spark without collecting data on the driver.
+ 
 **Alternatives considered and trade-offs**
-
+ 
+- **Season average instead of a single episode**: a single episode can be an outlier (e.g. a controversial episode, or a clip show). Comparing average ratings per season would measure the decline of the show more robustly, but it is not what the question asks.
+- **Definition of "last season"**: we used the last season with >= 10 episodes. Another option would be the real final season of the show, even if it is short. We chose the first option because the question focuses on seasons with >= 10 episodes, and a 3-episode final season would not be comparable.
 
 
 ### Q6. Success across languages
@@ -474,12 +500,26 @@ Tony Leung Chiu-wai               5         10 de, en, es, fr, ko
      Robert De Niro               3         34         en, es, it
 ```
 
+We found 1 199 actors with successful films in at least 2 languages and 170 in at least 3. 
+ 
 **Methodology**
+ 
+**Defining success** : a movie is successful if its rating is >= 7.0 and it has >= 10 000 votes. The vote threshold makes sure the film was actually seen by a large audience, and the rating ensures it was well received.
+ 
+**Finding the original language** : the IMDb dataset has no "original language" column, so we had to estimate it. In `title.akas`, each title has several alternative names, each with a region and sometimes a language. Our approach :
+ 
+1. Keep the akas whose title is equal (case-insensitive) to the movie's `originalTitle`, i.e. the versions that use the original name.
+2. Take the aka's `language` if it is filled, otherwise convert its `region` to the main language of that country with a small mapping dictionary (US → en, FR → fr, JP → ja, ...), implemented as a Spark map column with `create_map` (so no Python UDF is needed).
+3. Count how many times each language appears per movie and keep the most frequent one using a window with `row_number()`.
 
-
-
+This gives a language for 94.8% of the successful movies. The other 5.2% are dropped (inner join), so they don’t count toward any actor.
+ 
+**Counting per actor** : we join `title.principals` (category actor / actress) with the successful movies and their language, then group by actor and count distinct languages with `countDistinct`. Actors with >= 2 and >= 3 languages answer the two parts of the question.
+ 
 **Alternatives considered and trade-offs**
-
+ 
+- **External source** (Wikidata, TMDB `original_language`) : this would give the real original language and would be much more accurate. It would require enrichment from an open source with lineage, as in the Enrichment section. We stayed with IMDb-only data for this exploration step, but this would be the first improvement to make.
+- **Success threshold**: 7.0 / 10,000 votes is subjective. A lower vote threshold would include more non-English films (which tend to have fewer IMDb votes), but would also include more unknown titles.
 
 
 ### Q7. Early career peak
@@ -513,12 +553,25 @@ Subhalekha Sudhakar           23        1987       2026       8.38      5.92  2.
    Mehmet Ali Erbil           15        1981       2024       5.08      2.96  2.12 The Chaos Class: Bye Bye
 ```
 
+About one third of the eligible actors (1,136 out of 3,528) peaked early. 
+
 **Methodology**
-
-
-
+ 
+1. Join actors / actresses from `title.principals` with `movies`, keeping only movies with >= 1,000 votes and a known year (to avoid noisy ratings and very obscure titles).
+2. With window functions partitioned by actor, compute the first and last year of the career and find the best-rated movie (ties broken by number of votes).
+3. Split each career in two halves at the middle year `(first_year + last_year) / 2` : movies before or at the middle are "early", the others are "late".
+4. Group by actor to compute the number of movies, the early and late average ratings, and the year and title of the best movie.
+5. Keep eligible actors: career span >= 20 years and >= 15 movies. Since only films with >= 1,000 votes are counted, this is the actor’s visible career, not their full filmography.
+6. An actor "peaked early" if both conditions hold :
+   - the early average is at least 0.5 points higher than the late average,
+   - the best-rated movie is in the first half of the career.
+Using both conditions makes the result more robust : the best movie alone could be a single lucky film, and the averages alone could hide where the actual peak was.
+ 
 **Alternatives considered and trade-offs**
-
+ 
+- **Splitting by number of movies instead of years** (first half of the filmography vs second half) : would give two groups of the same size, but an actor who made 20 films in 5 years and then a few films over 20 years would have a strange split. We chose years because the question talks about career in time.
+- **Popularity as votes instead of rating** : the question says "popularity", but the example mentions "highest rated movies", so we used the rating. Using votes would be biased towards recent films, since older films collected fewer IMDb votes.
+- **Thresholds** : the 0.5 point drop and 1,000 votes are our own choices. A larger drop gives fewer but clearer cases. Note also that the data contains some 2026 titles (announced or recently released movies), which slightly extends some careers.
 
 
 ### Q8. Multi-talented professionals
@@ -570,11 +623,33 @@ Sylvester Stallone actor+director+writer            25       6.32        5.61  0
       Priyadarshan       director+writer            24       6.86        7.12 -0.26
 ```
 
+We found 3,654 multi-talented people. The large majority (2,670) are director-writers. Only 440 people combine all three roles.
+
+Writing and directing the same film works best : director+writer movies have the highest average rating (6.42), above movies where these people only direct (6.31) or only write or act (6.24). These averages only cover the multi-talented people, not all directors, writers or actors.
+
+Acting in your own film does not help much : as soon as acting is added to the combination, the average rating goes down (actor+writer 6.14, actor+director+writer 6.21).
+
+Among the 2,735 people who have both kinds of movies, 57.2% get better ratings on the films where they hold several roles, with an average gain of +0.11. So there is a small positive effect, but it is not huge.
+Individual cases vary a lot: Woody Allen (+1.02) and Éric Rohmer (+1.65) are much better rated on their personal projects, while Tyler Perry (-1.07) is rated better when he only holds one role.
+
+
 **Methodology**
-
-
-
+ 
+1. Build a single "roles" table with one row per (movie, person, role) :
+   - directors and writers from `title.crew` (exploded arrays),
+   - actors / actresses from `title.principals`,
+   combined with `unionByName` and deduplicated with `distinct()`. We only keep movies with >= 1,000 votes.
+2. A person has a talent for a role if they held it in >= 3 movies. A person is multi-talented if they have at least 2 such talents. This avoids counting, for example, a director who once made a cameo in their own movie as an actor.
+3. For each multi-talented person and each movie, we group their roles to get the combination they held on that movie (e.g. `actor+director`), sorted alphabetically with `array_sort` so that the label is always the same.
+4. We compare ratings in two ways:
+   - per combination : average rating and votes for each role combination,
+   - per person : for each individual, average rating of their multi-role movies vs their single-role movies. This second comparison is the most interesting because it compares people with themselves, so it removes the effect of individual talent.
+Building one unified roles table with a union made it easy to treat the three roles the same way, instead of writing separate joins for each combination.
+ 
 **Alternatives considered and trade-offs**
+ 
+- **Including other roles** (producer, composer, casting_director, ...) : `title.principals` contains these categories, and including them would give a broader definition of multi-talented. We kept the three roles given as examples in the question to keep the analysis focused.
+- **Selection bias** : people usually take several roles on projects that are personal to them, which may be different in nature (smaller budget, more artistic). So the rating difference cannot be read as "holding several roles causes better films", only as a correlation.
 
 
 ## Enrichment
